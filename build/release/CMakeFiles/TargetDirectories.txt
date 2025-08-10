@@ -1,0 +1,3 @@
+/Users/haoyi/Documents/Code/Electronics_for_embedded_systems/Motor_monitor/motor_monitor/build/release/CMakeFiles/motor_monitor.dir
+/Users/haoyi/Documents/Code/Electronics_for_embedded_systems/Motor_monitor/motor_monitor/build/release/CMakeFiles/edit_cache.dir
+/Users/haoyi/Documents/Code/Electronics_for_embedded_systems/Motor_monitor/motor_monitor/build/release/CMakeFiles/rebuild_cache.dir
