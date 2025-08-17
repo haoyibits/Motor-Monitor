@@ -11,7 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "adc.h"
+#include "../Inc/adc.h"
 #include "gpio.h"
 
 /**

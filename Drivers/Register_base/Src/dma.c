@@ -11,7 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "dma.h"
+#include "../Inc/dma.h"
 
 /**
  * @brief Get DMA stream register pointer

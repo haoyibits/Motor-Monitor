@@ -15,6 +15,8 @@
 
 #include "bsp.h"
 
+#include "event.h"
+
 /* Global ADC buffer for 200 samples */
 volatile uint16_t current_adcBuffer[200];  /* Removed static to allow access from irq.c and made volatile for DMA writes */
 uint16_t current_adcAverage = 0;  /* Latest calculated average */
@@ -34,12 +36,16 @@ void rcc_init(void)
     
     rcc_config_max_frequency(use_hse, hse_freq);
     
+    SystemCoreClockUpdate(); // Update SystemCoreClock variable after clock configuration
     /* Enable peripheral clocks */
     rcc_enable_gpio_clock(GPIOA);
     rcc_enable_gpio_clock(GPIOB);
     rcc_enable_gpio_clock(GPIOE);
+    rcc_enable_gpio_clock(GPIOD);
     rcc_enable_adc_clock(ADC1);
-    rcc_enable_dma_clock(DMA2);  
+    rcc_enable_dma_clock(DMA2);
+    rcc_enable_tim_clock(TIM2);
+    rcc_enable_usart_clock(USART2);
 }
 
 /**
@@ -49,22 +55,15 @@ void rcc_init(void)
  */
 void gpio_system_init(void)
 {
-    /* Configure SWD debug interface pins for OpenOCD */
-    gpio_init(GPIOA, 13, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_VHIGH, GPIO_PULLUP);   // SWDIO (PA13)
-    gpio_init(GPIOA, 14, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_VHIGH, GPIO_PULLDOWN); // SWCLK (PA14)
     
-    /* Set alternate function for SWD pins (AF0 for SWD) */
-    GPIOA->AFR[1] &= ~((0xF << ((13-8)*4)) | (0xF << ((14-8)*4))); // Clear PA13 and PA14 AF bits
-    GPIOA->AFR[1] |=  ((0x0 << ((13-8)*4)) | (0x0 << ((14-8)*4))); // Set PA13 and PA14 to AF0 (SWD)
-    
-    /* Configure motor control pins as GPIO outputs */
-    gpio_init(GPIOB, 2, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);
-    gpio_init(MOTOR_P_PORT, MOTOR_P_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);        // Motor P control
-    gpio_init(MOTOR_M_PORT, MOTOR_M_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);        // Motor M control
-    gpio_init(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL); // Motor enable
+    /* Motor initialize with encoder */
+    motor_init();
     
     /* Configure GPIO pin for ADC input */
     gpio_init(CURRENT_ADC_PORT, CURRENT_ADC_PIN, GPIO_MODE_ANALOG, 0, 0, GPIO_NOPULL);  // ADC input for motor monitoring
+
+    /* Button initialize */
+    button_system_init();
 }
 
 /**
@@ -163,6 +162,34 @@ void adc_dma_init(void)
     adc_start_conversion(ADC1);
 }
 
+/**
+ * @brief Initialize UART interface
+ * 
+ * Configures UART2 for communication at 115200 baud, 8N1 on PD5/PD6
+ */
+void uart_system_init(void)
+{
+    UART_HandleTypeDef huart2;
+    /* Configure UART pins */
+    UART_PinConfig uart_pins;
+    uart_pins.tx_port = FPGA_UART_TX_PORT;
+    uart_pins.tx_pin = FPGA_UART_TX_PIN;
+    uart_pins.rx_port = FPGA_UART_RX_PORT;
+    uart_pins.rx_pin = FPGA_UART_RX_PIN;
+    uart_pins.alt_func = GPIO_AF_USART2;  /* Alternate function for USART2 */
+    
+    /* Configure UART initialization structure */
+    huart2.Instance = USART2;             /* Use USART2 peripheral */
+    huart2.Init.BaudRate = 115200;
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HardwareFlowControl = UART_HWCONTROL_NONE;
+    
+    /* Initialize UART */
+    uart_init(&huart2, &uart_pins);
+}
 
 /**
  * @brief Initialize all system components
@@ -174,6 +201,8 @@ void adc_dma_init(void)
 void system_init(void)
 {
     rcc_init();             // First initialize system clock and peripheral clocks
+    systick_init(SystemCoreClock); // Initialize SysTick for 1ms timing
     gpio_system_init();     // Then initialize GPIO pins
     adc_dma_init();         // Initialize ADC with DMA in continuous mode
+    uart_system_init();     // Initialize UART interface
 }

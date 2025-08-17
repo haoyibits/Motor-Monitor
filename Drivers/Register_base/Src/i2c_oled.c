@@ -9,8 +9,8 @@
  */
 
 #include <stdio.h>
-#include "i2c_oled.h"
-#include "gpio.h"
+#include "../Inc/i2c_oled.h"
+#include "../Inc/gpio.h"
 
 /**
  * @brief Initialize I2C for OLED display

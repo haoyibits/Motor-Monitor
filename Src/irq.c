@@ -40,3 +40,28 @@ void DMA2_Stream0_IRQHandler(void)
         current_adcAverageReady = 1;
     }
 }
+
+/**
+ * @brief SysTick interrupt handler
+ * 
+ * This interrupt is triggered every 1ms by the SysTick timer.
+ * Calls the systick_irq_handler() to increment the system time counter.
+ */
+void SysTick_Handler(void)
+{
+    system_tick_ms++;
+    
+}
+
+/**
+ * @brief TIM2 interrupt handler for encoder
+ * 
+ * This interrupt is triggered by TIM2 CC3/CC4 events for encoder input capture.
+ * Calls the encoder interrupt handler to process quadrature signals.
+ */
+void TIM2_IRQHandler(void)
+{
+    // Call encoder interrupt handler with global motor encoder handle
+    extern Encoder_HandleTypeDef motor_encoder;
+    encoder_tim2_irq_handler(&motor_encoder);
+}

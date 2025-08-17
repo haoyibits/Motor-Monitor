@@ -11,7 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "rcc.h"
+#include "../Inc/rcc.h"
 
 /* Private variables for tracking clock frequencies */
 static uint32_t HSE_VALUE = 8000000; /* Default HSE frequency (8MHz) */
@@ -19,7 +19,7 @@ static uint32_t SystemClockFreq = 16000000; /* Default HSI frequency */
 static uint32_t HCLKFreq = 16000000;
 static uint32_t PCLK1Freq = 16000000;
 static uint32_t PCLK2Freq = 16000000;
-
+uint32_t system_clock =168 * 1000000; /* 168MHz system clock */
 /**
  * @brief Configure the system clock
  * 
@@ -258,6 +258,26 @@ void rcc_enable_dma_clock(DMA_TypeDef *DMA_number) {
 }
 
 /**
+ * @brief Enable peripheral clock for USART/UART
+ * 
+ * @param USARTx Pointer to USART (e.g. USART1, USART2, UART4)
+ */
+void rcc_enable_usart_clock(USART_TypeDef *USARTx) {
+    if (USARTx == USART1)
+        RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+    else if (USARTx == USART2)
+        RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+    else if (USARTx == USART3)
+        RCC->APB1ENR |= RCC_APB1ENR_USART3EN;
+    else if (USARTx == UART4)
+        RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
+    else if (USARTx == UART5)
+        RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
+    else if (USARTx == USART6)
+        RCC->APB2ENR |= RCC_APB2ENR_USART6EN;
+}
+
+/**
  * @brief Configure and set system to maximum frequency using either HSI or HSE
  * 
  * @details This is a convenient function to set the system clock to 168MHz,
@@ -293,6 +313,55 @@ uint8_t rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq) {
     config.APB1_Prescaler = RCC_APB_DIV4;  /* APB1 at 42MHz */
     config.APB2_Prescaler = RCC_APB_DIV2;  /* APB2 at 84MHz */
     config.Latency = 5;          /* 5 wait states for 168MHz operation */
-
     return rcc_system_clock_config(&config);
+}
+
+/**
+ * @brief Get APB1 peripheral clock frequency
+ * 
+ * @return uint32_t APB1 clock frequency in Hz
+ */
+uint32_t rcc_get_pclk1_freq(void)
+{
+    uint32_t pclk1;
+    uint32_t apb1_prescaler;
+    
+    /* Get APB1 prescaler value from CFGR register */
+    apb1_prescaler = (RCC->CFGR & RCC_CFGR_PPRE1) >> RCC_CFGR_PPRE1_Pos;
+    
+    /* Calculate PCLK1 frequency based on prescaler */
+    if ((apb1_prescaler & 0x04) == 0) {
+        /* APB1 clock not divided */
+        pclk1 = system_clock;
+    } else {
+        /* APB1 clock divided by 2, 4, 8, or 16 */
+        pclk1 = system_clock >> (((apb1_prescaler & 0x03) + 1));
+    }
+    
+    return pclk1;
+}
+
+/**
+ * @brief Get APB2 peripheral clock frequency
+ * 
+ * @return uint32_t APB2 clock frequency in Hz
+ */
+uint32_t rcc_get_pclk2_freq(void)
+{
+    uint32_t pclk2;
+    uint32_t apb2_prescaler;
+    
+    /* Get APB2 prescaler value from CFGR register */
+    apb2_prescaler = (RCC->CFGR & RCC_CFGR_PPRE2) >> RCC_CFGR_PPRE2_Pos;
+    
+    /* Calculate PCLK2 frequency based on prescaler */
+    if ((apb2_prescaler & 0x04) == 0) {
+        /* APB2 clock not divided */
+        pclk2 = system_clock;
+    } else {
+        /* APB2 clock divided by 2, 4, 8, or 16 */
+        pclk2 = system_clock >> (((apb2_prescaler & 0x03) + 1));
+    }
+    
+    return pclk2;
 }

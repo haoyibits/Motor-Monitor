@@ -11,7 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "tim.h"
+#include "../Inc/tim.h"
 
 /**
  * @brief Initialize a timer with basic parameters

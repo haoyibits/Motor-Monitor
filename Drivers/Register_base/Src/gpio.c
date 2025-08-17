@@ -11,7 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "gpio.h"
+#include "../Inc/gpio.h"
 
 /**
  * @brief Initialize a GPIO pin's mode, output type, speed, and pull-up/pull-down

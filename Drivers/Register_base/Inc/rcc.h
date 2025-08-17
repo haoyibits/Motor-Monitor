@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stm32f4xx.h>
 
+extern uint32_t system_clock;
 /**
  * @brief System clock sources
  */
@@ -113,6 +114,13 @@ void rcc_enable_i2c_clock(I2C_TypeDef *I2Cx);
 void rcc_enable_dma_clock(DMA_TypeDef *DMA_number);
 
 /**
+ * @brief Enable peripheral clock for USART/UART
+ * 
+ * @param USARTx Pointer to USART (e.g. USART1, USART2, UART4)
+ */
+void rcc_enable_usart_clock(USART_TypeDef *USARTx);
+
+/**
  * @brief Configure and set system to default 168MHz frequency using PLL
  *
  * @details This is a convenient function to set the system clock to 168MHz,
@@ -125,5 +133,19 @@ void rcc_enable_dma_clock(DMA_TypeDef *DMA_number);
  * @return uint8_t 0 if successful, 1 if error occurred
  */
 uint8_t rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq);
+
+/**
+ * @brief Get APB1 peripheral clock frequency
+ * 
+ * @return uint32_t APB1 clock frequency in Hz
+ */
+uint32_t rcc_get_pclk1_freq(void);
+
+/**
+ * @brief Get APB2 peripheral clock frequency
+ * 
+ * @return uint32_t APB2 clock frequency in Hz
+ */
+uint32_t rcc_get_pclk2_freq(void);
 
 #endif /* __RCC_H */
