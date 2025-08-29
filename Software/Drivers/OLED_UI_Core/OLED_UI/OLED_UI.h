@@ -10,13 +10,13 @@ extern "C" {
 #ifdef OLED_UI
 
 
-#include "Driver\Hardware_Driver\OLED_UI_Driver.h"
-#include "Driver\Software_Driver\OLED.h"
+#include "OLED_UI_Driver.h"
+#include "OLED.h"
 #include "stdint.h"
 #include "stdbool.h"
 
 // 显存缓存区
-extern uint8_t OLED_DisplayBuf[OLED_HEIGHT/8][OLED_WIDTH];
+
 
 /************************************************************/
 /***********************用户可以配置的宏定义******************/
@@ -36,8 +36,8 @@ extern uint8_t OLED_DisplayBuf[OLED_HEIGHT/8][OLED_WIDTH];
 
 /************关于菜单项横向滚动速度的宏**********************/
 //当菜单项长度超过菜单区域宽度时，本ui框架会自动实现菜单项的横向滚动显示，这是菜单项横向滚动步长（每一帧滚动的像素距离）
-#define LINE_SLIP_SPEED			(0.05)			//菜单项横向滚动速度【可以是小数，但是最好是1的整数倍或者1的偶数分之一倍】
-#define GIFICON_SLIP_SPEED			(100)			//Gif的播放速度【每 XX FPS播放一帧Gif】
+#define LINE_SLIP_SPEED			(1)			//菜单项横向滚动速度【60fps优化】
+#define GIFICON_SLIP_SPEED			(80)			//Gif的播放速度【60fps优化】
 
 
 /************关于菜单项前缀符号的宏**********************/
@@ -63,7 +63,7 @@ extern uint8_t OLED_DisplayBuf[OLED_HEIGHT/8][OLED_WIDTH];
 #define WINDOW_DATA_TEXT_DISTANCE           (4)
 
 /**************关于淡出每帧的时间的宏**********/
-#define FADEOUT_TIME					(40)			//菜单项淡出每帧的时间
+#define FADEOUT_TIME					(6)			//菜单项淡出每帧的时间【90fps优化：10/1.8】
 
 /************************************************************/
 

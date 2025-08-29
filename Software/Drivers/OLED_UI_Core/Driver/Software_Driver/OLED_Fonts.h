@@ -57,6 +57,14 @@ extern const uint8_t Image_calc[];
 extern const uint8_t Image_night[];
 extern const uint8_t Image_sleep[];
 
+// Motor Monitor System Icons - 电机监控系统专用图标
+extern const uint8_t Image_motor[];
+extern const uint8_t Image_protection[];
+extern const uint8_t Image_device_info[];
+extern const uint8_t Image_output_source[];
+extern const uint8_t Image_pwm_control[];
+extern const uint8_t Image_pid_control[];
+
 
 extern const uint8_t Image_settings_64[];
 extern const uint8_t Image_calc_64[];

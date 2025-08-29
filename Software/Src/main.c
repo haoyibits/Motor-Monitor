@@ -8,11 +8,12 @@
  * @details
  * This file contains the main loop of a minimal STM32 project.
  * No HAL or LL library is used. Only pure C with register-level programming.
- *
- * Created for personal learning and embedded systems experimentation.
- *
+ * For debugging, DAP-link and SEGGER RTT are used.
  ******************************************************************************
  */
+
+#include "OLED_UI_MenuData.h"
+#include "motor.h"
 
 #include <stdint.h>
 #include <SEGGER_RTT.h>
@@ -21,15 +22,24 @@
 
 int main(void)
 {
-    /* Initialize system */
+    /* Initialize system with early config loading */
     system_init();
     SEGGER_RTT_printf(0, "System init...\r\n");
-    gpio_write(GPIOB,2, 1);
-    motor_init();
+    gpio_write(GPIOB, 2, 1); // For led test
+    
     scan_init();
+    OLED_UI_Init(&MainMenuPage);
+    
+    /* Synchronize motor configuration with UI variables after UI system is ready */
+    motor_ui_update_from_config();
+    
+    /* Apply loaded motor configuration (auto-start based on saved output_source) */
+    //motor_apply_config();
+    
     /* Main loop */
     while (1)
     {
+        OLED_UI_MainLoop();
         scan_check();
     }
 }

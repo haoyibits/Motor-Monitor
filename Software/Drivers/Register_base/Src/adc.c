@@ -11,8 +11,7 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "../Inc/adc.h"
-#include "gpio.h"
+#include "bsp.h"
 
 /**
  * @brief Initialize ADC with the specified parameters

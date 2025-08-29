@@ -10,13 +10,13 @@
  * It provides functions for motor control initialization including GPIO
  * configuration for motor control pins and encoder setup for position
  * feedback using quadrature decoding with TIM2.
- *
- * This file is part of a bare-metal STM32F407VGT6 project.
  ******************************************************************************
  */
 
 #include "bsp.h"
+#include "motor.h"
 #include "SEGGER_RTT.h"
+#include "../Drivers/OLED_UI_Core/OLED_UI/OLED_UI_MenuData.h"
 
 /* Global timer variables for periodic scanning */
 SysTick_Timer_t encoder_timer;      // Timer for encoder position/speed monitoring
@@ -31,58 +31,7 @@ Button_HandleTypeDef button_return;  // RETURN button (PE11)
 Button_Manager_t button_manager;     // Button manager for efficient scanning
 Button_HandleTypeDef *button_array[] = {&button_up, &button_down, &button_enter, &button_return}; // Button array for manager
 
-/**
- * @brief Initialize motor control system
- * 
- * @details This function performs complete motor system initialization:
- *          1. Configures motor control GPIO pins as outputs
- *          2. Sets initial motor states (enabled, forward direction)  
- *          3. Configures encoder GPIO pins for TIM2 input capture
- *          4. Initializes encoder with quadrature decoding
- *          5. Starts encoder counting for position feedback
- * 
- * @note Motor control pins:
- *       - PB0 (MOTOR_P_PIN): Motor positive control
- *       - PB1 (MOTOR_M_PIN): Motor negative control  
- *       - PE7 (MOTOR_ENABLE_PIN): Motor enable control
- *       - PB2: Additional GPIO output
- * 
- * @note Encoder pins:
- *       - PA2 (ENCODER_CH1_PIN): Encoder A phase input (TIM2_CH1)
- *       - PA3 (ENCODER_CH2_PIN): Encoder B phase input (TIM2_CH2)
- * 
- * @warning This function assumes RCC clocks are already enabled for:
- *          GPIOA, GPIOB, GPIOE, and TIM2 peripherals
- */
-void motor_init(void)
-{
-    /* Configure motor control pins as GPIO outputs */
-    gpio_init(GPIOB, 2, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);    // Additional GPIO output
-    gpio_init(MOTOR_P_PORT, MOTOR_P_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);        // Motor P control
-    gpio_init(MOTOR_M_PORT, MOTOR_M_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL);        // Motor M control
-    gpio_init(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_MED, GPIO_NOPULL); // Motor enable
-
-    /* Configure motor pin initial states */
-    gpio_write(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, 1);    // Enable motor driver
-    gpio_write(MOTOR_P_PORT, MOTOR_P_PIN, 1);              // Set forward direction (P=1, M=0)
-    gpio_write(MOTOR_M_PORT, MOTOR_M_PIN, 0);              // Set forward direction (P=1, M=0)
-
-    /* Configure encoder GPIO pins for TIM2 input capture on PA2/PA3 (CH3/CH4) */
-    encoder_gpio_init(ENCODER_TIM, ENCODER_CH3_PORT, ENCODER_CH3_PIN, ENCODER_CH4_PORT, ENCODER_CH4_PIN, 1);  
-    
-    /* Initialize encoder with TIM2 */
-    static Encoder_InitTypeDef encoder_config = {
-        .TIMx = ENCODER_TIM,                              // Use TIM2 for encoder interface
-        .CountsPerRevolution = 1000,                      // Adjust based on your encoder specification
-        .IC1Polarity = ENCODER_IC_POLARITY_RISING,        // A phase rising edge polarity
-        .IC2Polarity = ENCODER_IC_POLARITY_RISING,        // B phase rising edge polarity
-        .MaxCount = 0xFFFF                                // 16-bit timer maximum count value
-    };
-    
-    /* Initialize and start encoder counting */
-    encoder_init(&motor_encoder, &encoder_config);        // Configure TIM2 in encoder mode
-    encoder_start(&motor_encoder);                        // Start counting encoder pulses
-}
+Encoder_HandleTypeDef motor_encoder; // Global encoder handle for system-wide access
 
 /**
  * @brief Initialize button system for user interface
@@ -188,20 +137,14 @@ void button_handler(void)
     
     // ENTER Button (PE12): Confirm selection or start/stop motor
     if (button_pressed(&button_enter)) {
-        static uint8_t motor_running = 1;  // Track motor state (initially running)
-        motor_running = !motor_running;    // Toggle state
+        SEGGER_RTT_printf(0, "ENTER button pressed\r\n");
         
-        gpio_write(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, motor_running);
-        SEGGER_RTT_printf(0, "ENTER pressed - Motor %s\r\n", motor_running ? "STARTED" : "STOPPED");
     }
     
     // RETURN Button (PE11): Go back or emergency stop
     if (button_pressed(&button_return)) {
-        // Emergency stop functionality
-        gpio_write(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, 0);  // Immediately disable motor
-        gpio_write(MOTOR_P_PORT, MOTOR_P_PIN, 0);            // Stop both directions
-        gpio_write(MOTOR_M_PORT, MOTOR_M_PIN, 0);
-        SEGGER_RTT_printf(0, "RETURN pressed - EMERGENCY STOP!\r\n");
+        SEGGER_RTT_printf(0, "RETURN button pressed\r\n");
+        
     }
 }
 
@@ -226,40 +169,78 @@ void encoder_handler(void)
         uint32_t current_time = systick_get_ms();
         int32_t rpm = encoder_calculate_speed_rpm(&motor_encoder, current_time);
         
-        SEGGER_RTT_printf(0, "TotalCount: %d, Time: %d ms, Speed: %d RPM\r\n",
-                         total_count, current_time, rpm);
+        //SEGGER_RTT_printf(0, "TotalCount: %d, Time: %d ms, Speed: %d RPM\r\n",
+        //                 total_count, current_time, rpm);
     }
 }
 
 /**
- * @brief Monitor motor current and perform safety shutdown if needed
+ * @brief Monitor motor current with startup-aware protection and auto-restart
  * 
- * @details This function processes ADC readings for motor current monitoring:
- *          1. Checks if the current timer period has elapsed
- *          2. When new ADC data is ready (flag set by DMA interrupt), calculates average
- *          3. Compares average current to critical threshold
- *          4. Performs emergency motor shutdown if current exceeds safe limits
+ * @details This function implements intelligent current monitoring with motor state awareness:
+ *          1. Tracks motor startup vs running states with different current thresholds
+ *          2. Allows higher current during startup phase (inrush current protection)
+ *          3. Applies strict current limits during normal operation
+ *          4. Uses consecutive overcurrent detection to avoid false triggers
+ *          5. Automatic state transition from startup to running after timeout
+ *          6. Integrates with new auto-restart protection system
  * 
- * @note This function relies on DMA to continuously fill the current_adcBuffer
- *       and set the current_adcAverageReady flag when buffer is full
+ * @note Current thresholds:
+ *       - Startup: CURRENT_STARTUP_THRESHOLD (3700) - allows motor inrush current
+ *       - Running: CURRENT_RUNNING_THRESHOLD (3000) - strict protection
  */
 void current_handler(void)
 {
     /* Check if current timer has expired */
     if (systick_timer_expired(&current_timer)) {
-        if (current_adcAverageReady)
-        {
-            sum = 0;  // Reset sum before calculating new average
+        if (current_adcAverageReady) {
+            /* Calculate average current from ADC buffer */
+            sum = 0;
             for (int i = 0; i < 200; i++) 
                 sum += current_adcBuffer[i];
-            current_adcAverage = sum / 200;  // Calculate average
-            if (current_adcAverage > CURRENT_CRITICAL_THRESHOLD) {
-                gpio_write(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, 0); // Disable motor
+            current_adcAverage = sum / 200;
+            
+            /* Update motor state and threshold based on current conditions */
+            motor_current_state_update();
+            
+            /* Update motor protection system with auto-restart logic */
+            motor_protection_update();
+            
+            /* Check for overcurrent condition using legacy system */
+            if (current_adcAverage > motor_monitor.current_threshold) {
+                motor_monitor.overcurrent_count++;
+                //SEGGER_RTT_printf(0, "Overcurrent detected: %d (threshold: %d) count: %d\r\n", 
+                //                 current_adcAverage, motor_monitor.current_threshold, motor_monitor.overcurrent_count);
+                
+                /* Emergency shutdown after consecutive overcurrent detections */
+                if (motor_monitor.overcurrent_count >= OVERCURRENT_COUNT_LIMIT) {
+                    motor_emergency_shutdown();
+                //    SEGGER_RTT_printf(0, "EMERGENCY SHUTDOWN - Overcurrent protection triggered!\r\n");
+                }
+            } else {
+                /* Reset overcurrent counter if current is within limits */
+                motor_monitor.overcurrent_count = 0;
             }
+            
+            /* Debug output for monitoring */
+            if (motor_monitor.state != MOTOR_STATE_STOPPED) {
+                //SEGGER_RTT_printf(0, "Motor State: %d, Current: %d, Threshold: %d\r\n", 
+                //                 motor_monitor.state, current_adcAverage, motor_monitor.current_threshold);
+            }
+            
             current_adcAverageReady = 0;
         }
     }
 }
+
+void oled_handler(void)
+{
+    /* Check if encoder timer has expired */
+    if (systick_timer_expired(&oledui_timer)) {
+        OLED_UI_InterruptHandler();
+    }
+}
+
 
 /**
  * @brief Initialize all system scanning timers
@@ -286,6 +267,8 @@ void scan_init(void)
     /* Initialize shared timer for all buttons */
     systick_timer_init(&button_manager.scan_timer, 5, 1);
     systick_timer_start(&button_manager.scan_timer);
+
+    Timer_Init();           // Initialize UI timer system
 }
 
 /**
@@ -303,8 +286,29 @@ void scan_check(void)
 {
     encoder_handler();  // Handle encoder events
     current_handler();  // Handle current monitoring events
+    oled_handler();     // Handle OLED UI events
     
     /* Check button states using optimized manager (all 4 buttons scanned with single timer) */
     button_handler();
     
+}
+
+/**
+ * @brief Early motor configuration loading during system startup
+ * 
+ * @details This function loads motor configuration from SPI Flash early in the boot process.
+ *          It should be called from main() before other system initialization.
+ */
+void motor_config_early_load(void)
+{
+    /* Initialize SPI Flash system for parameter storage */
+    SEGGER_RTT_printf(0, "Early motor config loading...\r\n");
+    
+    /* Initialize SPI Flash hardware first */
+    spi_flash_system_init();
+    
+    /* Load motor configuration from flash */
+    motor_config_init();
+    
+    SEGGER_RTT_printf(0, "Motor config early load completed\r\n");
 }

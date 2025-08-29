@@ -8,8 +8,6 @@
  * @details
  * This file contains interrupt handlers for various peripherals including
  * DMA, Timer, ADC, GPIO, etc.
- *
- * This file is part of a bare-metal STM32F407VGT6 project.
  ******************************************************************************
  */
 
@@ -51,17 +49,4 @@ void SysTick_Handler(void)
 {
     system_tick_ms++;
     
-}
-
-/**
- * @brief TIM2 interrupt handler for encoder
- * 
- * This interrupt is triggered by TIM2 CC3/CC4 events for encoder input capture.
- * Calls the encoder interrupt handler to process quadrature signals.
- */
-void TIM2_IRQHandler(void)
-{
-    // Call encoder interrupt handler with global motor encoder handle
-    extern Encoder_HandleTypeDef motor_encoder;
-    encoder_tim2_irq_handler(&motor_encoder);
 }

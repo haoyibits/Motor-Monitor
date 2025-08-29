@@ -16,13 +16,6 @@
 
 #include "stm32f407xx.h"
 
-/**
- * @brief Initialize motor control system
- * 
- * @details Configures motor control GPIO pins, encoder interface, and starts
- *          encoder counting for position feedback.
- */
-void motor_init(void);
 
 /**
  * @brief Initialize button system
@@ -57,6 +50,28 @@ void scan_check(void);
  *          - RETURN: Emergency stop
  */
 void button_handler(void);
+
+/**
+ * @brief Monitor motor current with startup-aware protection
+ * 
+ * @details Implements intelligent current monitoring with different thresholds
+ *          for startup vs running states.
+ */
 void current_handler(void);
+
+/**
+ * @brief Process encoder feedback data and calculate speed
+ * 
+ * @details Monitors encoder position and calculates motor speed in RPM.
+ */
 void encoder_handler(void);
+
+/**
+ * @brief Early motor configuration loading during system startup
+ * 
+ * @details Loads motor configuration from SPI Flash early in the boot process.
+ */
+void motor_config_early_load(void);
+
+
 #endif /* EVENT_H */

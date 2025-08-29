@@ -1,5 +1,6 @@
 #include "OLED_UI.h"
-#include "..\OLED_UI_Launcher.h"
+
+#include "OLED_driver.h"
 
 
 #ifdef OLED_UI
@@ -44,11 +45,11 @@ OLED_ChangeDistance OLED_UI_LineStep;
 /**
  * @brief 获取当前屏幕刷新率，结果存储在全局变量OLED_FPS.value中
  * @param 无
- * @note 该函数需要放在20ms周期内调用，否则会导致计数错误
+ * @note 该函数需要放在16ms周期内调用（60fps），否则会导致计数错误
  * @return 无
  */
 void GetFPS(void){
-	if(OLED_FPS.step<49){
+	if(OLED_FPS.step<59){
 		OLED_FPS.step++;
 	}else{
 		OLED_FPS.step=0;
@@ -452,7 +453,7 @@ void OLED_UI_Init(MenuPage* Page){
 	OLED_Init();
 
 	//启动定时器
-	HAL_TIM_Base_Start_IT(&htim1);
+	//HAL_TIM_Base_Start_IT(&htim1);
 	Timer_Init();
 	Key_Init();
 	Encoder_Init();
@@ -1390,9 +1391,9 @@ void RunFadeOut(void){
 	*/
 	if(FadeOutFlag != FLAGEND){
 		if (FadeOut_Seq != 0){	//如果当前不是步骤0
-			if ((FadeOut_Seq_StartTick + FADEOUT_TIME) < HAL_GetTick()){	//计时FADEOUT_TIME毫秒
+			if ((FadeOut_Seq_StartTick + FADEOUT_TIME) < systick_get_ms()){	//计时FADEOUT_TIME毫秒
 				FadeOut_Seq++;
-				FadeOut_Seq_StartTick = HAL_GetTick();	//记录每一步的开始时间
+				FadeOut_Seq_StartTick = systick_get_ms();	//记录每一步的开始时间
 			}
 		}
 		if (FadeOut_Seq == 0){	//步骤0：计算效果参数
@@ -1714,7 +1715,10 @@ void OLED_UI_InterruptHandler(void){
 			if(OLED_SustainCounter.SustainFlag == false){
 				BackEventMenuItem();
 			}else{
-				OLED_SustainCounter.count = (int16_t)(CurrentWindow->General_ContinueTime * 50);
+				// Only close window if it's not permanent (General_ContinueTime >= 0)
+				if(CurrentWindow != NULL && CurrentWindow->General_ContinueTime >= 0.0f){
+					OLED_SustainCounter.count = (int16_t)(CurrentWindow->General_ContinueTime * 50);
+				}
 			}
 			
 		}
@@ -1737,7 +1741,9 @@ void OLED_UI_InterruptHandler(void){
 		OLED_SustainCounter.count++;
 	}
 	if(CurrentWindow != NULL){
-		if(OLED_SustainCounter.count >= (int16_t)(CurrentWindow->General_ContinueTime * 50)){
+		// Check if window should auto-close (General_ContinueTime < 0 means permanent window)
+		if(CurrentWindow->General_ContinueTime >= 0.0f && 
+		   OLED_SustainCounter.count >= (int16_t)(CurrentWindow->General_ContinueTime * 50)){
 			OLED_SustainCounter.SustainFlag = false;
 			OLED_SustainCounter.count = 0;
 		}

@@ -6,13 +6,13 @@
 extern "C" {
 #endif
 
-#include "..\Hardware_Driver\OLED_Driver.h"			//oled底层驱动头文件
+#include "OLED_Driver.h"			//oled底层驱动头文件
 #include "OLED_Fonts.h"				//oled字体库头文件
 #include "stdbool.h"
 
 
 //使用宏定义的方式确定oled的横向像素与竖向像素
-#define OLED_WIDTH				    (128)					
+#define OLED_WIDTH		            (128)					
 #define OLED_HEIGHT 			    (64)
 /*半角字符参数取值*/
 /*此参数值不仅用于判断，而且用于计算横向字符偏移，默认值为字体像素宽度*/

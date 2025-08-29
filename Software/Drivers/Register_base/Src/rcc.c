@@ -11,7 +11,8 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "../Inc/rcc.h"
+#include "bsp.h"
+
 
 /* Private variables for tracking clock frequencies */
 static uint32_t HSE_VALUE = 8000000; /* Default HSE frequency (8MHz) */
@@ -364,4 +365,23 @@ uint32_t rcc_get_pclk2_freq(void)
     }
     
     return pclk2;
+}
+
+/**
+ * @brief Enable peripheral clock for SPI
+ * 
+ * @param SPIx Pointer to SPI (e.g. SPI1, SPI2, SPI3)
+ */
+void rcc_enable_spi_clock(SPI_TypeDef *SPIx)
+{
+    if (SPIx == SPI1) {
+        /* SPI1 is on APB2 bus */
+        RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
+    } else if (SPIx == SPI2) {
+        /* SPI2 is on APB1 bus */
+        RCC->APB1ENR |= RCC_APB1ENR_SPI2EN;
+    } else if (SPIx == SPI3) {
+        /* SPI3 is on APB1 bus */
+        RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;
+    }
 }

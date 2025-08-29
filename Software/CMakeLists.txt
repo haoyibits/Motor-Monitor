@@ -36,7 +36,10 @@ file(GLOB_RECURSE sources_SRCS
         ${CMAKE_SOURCE_DIR}/Src/*.c
         ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/*.c
         ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/*.c 
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI/*.c
 )
 # Include directories for all compilers
 set(include_DIRS
@@ -48,6 +51,11 @@ set(include_DIRS
         ${CMAKE_SOURCE_DIR}/Scr
         ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Inc
         ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Scr
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI
+        
 ) 
 
 # Include directories for each compiler
@@ -154,6 +162,8 @@ target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
     -Wl,-Map=${CMAKE_PROJECT_NAME}.map
     -u _printf_float # STDIO float formatting support (remove if not used)
     --specs=nosys.specs
+    -Wl,--gc-sections 
+    -Wl,--no-warn-rwx-segments 
     -Wl,--start-group
     -lc
     -lm

@@ -7,21 +7,29 @@
  ******************************************************************************
  * @details
  * This file implements system initialization functions for required hardware modules
- * including clock, GPIO, and ADC with DMA.
- *
- * This file is part of a bare-metal STM32F407VGT6 project.
  ******************************************************************************
  */
 
 #include "bsp.h"
-
+#include "rcc.h"
+#include "spi.h"
 #include "event.h"
+#include "motor.h"
+#include "../Drivers/OLED_UI_Core/OLED_UI/OLED_UI_MenuData.h"
 
 /* Global ADC buffer for 200 samples */
 volatile uint16_t current_adcBuffer[200];  /* Removed static to allow access from irq.c and made volatile for DMA writes */
 uint16_t current_adcAverage = 0;  /* Latest calculated average */
 volatile uint8_t current_adcAverageReady = 0;  /* Flag indicating new average is ready */
 uint32_t sum = 0;
+
+/* Motor current monitoring global instance */
+Motor_Current_Monitor_t motor_monitor = {
+    .state = MOTOR_STATE_STOPPED,
+    .startup_start_time = 0,
+    .overcurrent_count = 0,
+    .current_threshold = CURRENT_RUNNING_THRESHOLD
+};
 /**
  * @brief Initialize RCC (Reset and Clock Control)
  * 
@@ -44,8 +52,10 @@ void rcc_init(void)
     rcc_enable_gpio_clock(GPIOD);
     rcc_enable_adc_clock(ADC1);
     rcc_enable_dma_clock(DMA2);
-    rcc_enable_tim_clock(TIM2);
+    rcc_enable_tim_clock(TIM4);
     rcc_enable_usart_clock(USART2);
+    rcc_enable_i2c_clock(I2C1);
+    rcc_enable_spi_clock(SPI1);
 }
 
 /**
@@ -58,7 +68,7 @@ void gpio_system_init(void)
     
     /* Motor initialize with encoder */
     motor_init();
-    
+    /* Note: Motor start is handled by motor_apply_config() when configuration is loaded */
     /* Configure GPIO pin for ADC input */
     gpio_init(CURRENT_ADC_PORT, CURRENT_ADC_PIN, GPIO_MODE_ANALOG, 0, 0, GPIO_NOPULL);  // ADC input for motor monitoring
 
@@ -192,6 +202,49 @@ void uart_system_init(void)
 }
 
 /**
+ * @brief Initialize SPI Flash system
+ * 
+ * @details Configures SPI1 peripheral and initializes W25Q128 Flash memory
+ *          for persistent storage of motor parameters.
+ *          
+ * @note Currently commented out until SPI driver is implemented
+ */
+void spi_flash_system_init(void)
+{
+    /* Configure SPI pins for W25Q128 Flash */
+    gpio_init(W25Q128_SPI_PORT, W25Q128_SCK_PIN, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_HIGH, GPIO_NOPULL);     // PA5 - SCK
+    gpio_init(W25Q128_SPI_PORT, W25Q128_MISO_PIN, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_HIGH, GPIO_PULLUP);    // PA6 - MISO
+    gpio_init(W25Q128_SPI_PORT, W25Q128_MOSI_PIN, GPIO_MODE_AF, GPIO_OTYPE_PP, GPIO_SPEED_HIGH, GPIO_NOPULL);    // PA7 - MOSI
+    gpio_init(W25Q128_CS_PORT, W25Q128_CS_PIN, GPIO_MODE_OUTPUT, GPIO_OTYPE_PP, GPIO_SPEED_HIGH, GPIO_NOPULL);   // PA4 - CS
+    
+    /* Set alternate function for SPI pins (AF5 for SPI1) */
+    gpio_set_af(W25Q128_SPI_PORT, W25Q128_SCK_PIN, 5);   // AF5 = SPI1
+    gpio_set_af(W25Q128_SPI_PORT, W25Q128_MISO_PIN, 5);  // AF5 = SPI1
+    gpio_set_af(W25Q128_SPI_PORT, W25Q128_MOSI_PIN, 5);  // AF5 = SPI1
+    
+    /* Set CS pin high (inactive) initially */
+    gpio_write(W25Q128_CS_PORT, W25Q128_CS_PIN, 1);
+    
+    /* Enable SPI1 clock */
+    rcc_enable_spi_clock(SPI1);
+    
+    /* Initialize SPI1 peripheral */
+    SPI_Config_t spi_config = {
+        .mode = SPI_MODE_MASTER,
+        .dataSize = SPI_DATASIZE_8BIT,
+        .clockPolarity = SPI_CPOL_LOW,
+        .clockPhase = SPI_CPHA_1EDGE,
+        .prescaler = SPI_PRESCALER_8,    // APB2=84MHz, SPI=10.5MHz
+        .firstBit = SPI_FIRSTBIT_MSB
+    };
+    
+    spi_init(SPI1, &spi_config);
+    
+    /* Enable SPI1 peripheral */
+    spi_enable(SPI1);
+}
+
+/**
  * @brief Initialize all system components
  * 
  * This function initializes the complete system by calling
@@ -200,9 +253,19 @@ void uart_system_init(void)
  */
 void system_init(void)
 {
+    /* Initialize basic hardware first */
     rcc_init();             // First initialize system clock and peripheral clocks
     systick_init(SystemCoreClock); // Initialize SysTick for 1ms timing
-    gpio_system_init();     // Then initialize GPIO pins
-    adc_dma_init();         // Initialize ADC with DMA in continuous mode
+    gpio_system_init();     // Initialize GPIO pins
     uart_system_init();     // Initialize UART interface
+    
+    /* Early motor configuration loading (highest priority) */
+    motor_config_early_load();
+    
+    /* Continue with remaining system initialization */
+    adc_dma_init();         // Initialize ADC with DMA in continuous mode
+    
+    /* Initialize OLED display system */
+    OLED_Init();            // Initialize OLED hardware (I2C + display)
+    /* Note: motor_apply_config() moved to main() after UI initialization */
 }

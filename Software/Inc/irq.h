@@ -26,9 +26,12 @@
  */
 void DMA2_Stream0_IRQHandler(void);
 
-/* External variables for ADC data */
-extern uint16_t adcBuffer[50];
-extern uint16_t adcAverage;
-extern volatile uint8_t adcAverageReady;
+/**
+ * @brief SysTick interrupt handler
+ * 
+ * This interrupt is triggered every 1ms by the SysTick timer.
+ * Calls the systick_irq_handler() to increment the system time counter.
+ */
+void SysTick_Handler(void);
 
 #endif /* IRQ_H */

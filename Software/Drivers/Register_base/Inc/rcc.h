@@ -121,6 +121,13 @@ void rcc_enable_dma_clock(DMA_TypeDef *DMA_number);
 void rcc_enable_usart_clock(USART_TypeDef *USARTx);
 
 /**
+ * @brief Enable peripheral clock for SPI
+ * 
+ * @param SPIx Pointer to SPI (e.g. SPI1, SPI2, SPI3)
+ */
+void rcc_enable_spi_clock(SPI_TypeDef *SPIx);
+
+/**
  * @brief Configure and set system to default 168MHz frequency using PLL
  *
  * @details This is a convenient function to set the system clock to 168MHz,

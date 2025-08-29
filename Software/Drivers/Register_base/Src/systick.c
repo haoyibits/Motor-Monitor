@@ -18,8 +18,8 @@
  ******************************************************************************
  */
 
-#include "systick.h"
-#include "rcc.h"
+#include "bsp.h"
+
 
 /* Global variables */
 volatile uint32_t system_tick_ms = 0;    /**< System time counter in milliseconds */

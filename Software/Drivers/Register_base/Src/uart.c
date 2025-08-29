@@ -8,8 +8,8 @@
  * microcontrollers using direct register access.
  */
 
-#include "uart.h"
-#include "stdio.h"
+#include "bsp.h"
+
 /**
  * @brief Configure GPIO pins for UART
  * 
