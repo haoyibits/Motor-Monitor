@@ -13,6 +13,9 @@
 #define DMA_H
 
 #include "stm32f407xx.h"
+#include "driver_status.h"
+
+#define DMA_DEFAULT_TIMEOUT_CYCLES 100000U
 
 /**
  * @brief DMA initialization configuration structure
@@ -169,7 +172,8 @@ typedef struct {
  * 
  * @note DMA clock must be enabled separately via RCC registers before calling this function
  */
-void dma_init(DMA_TypeDef *DMAx, uint32_t stream, DMA_InitTypeDef *init);
+DriverStatus dma_init(DMA_TypeDef *DMAx, uint32_t stream,
+                      const DMA_InitTypeDef *init, uint32_t timeout_cycles);
 
 /**
  * @brief Configure DMA transfer parameters
@@ -182,7 +186,10 @@ void dma_init(DMA_TypeDef *DMAx, uint32_t stream, DMA_InitTypeDef *init);
  * 
  * @note This function should be called after dma_init
  */
-void dma_config_transfer(DMA_TypeDef *DMAx, uint32_t stream, uint32_t SrcAddress, uint32_t DstAddress, uint16_t DataLength);
+DriverStatus dma_config_transfer(DMA_TypeDef *DMAx, uint32_t stream,
+                                 uint32_t SrcAddress, uint32_t DstAddress,
+                                 uint16_t DataLength,
+                                 uint32_t timeout_cycles);
 
 /**
  * @brief Enable DMA stream
@@ -190,7 +197,7 @@ void dma_config_transfer(DMA_TypeDef *DMAx, uint32_t stream, uint32_t SrcAddress
  * @param DMAx DMA instance (DMA1 or DMA2)
  * @param stream Stream number (0-7)
  */
-void dma_enable(DMA_TypeDef *DMAx, uint32_t stream);
+DriverStatus dma_enable(DMA_TypeDef *DMAx, uint32_t stream);
 
 /**
  * @brief Disable DMA stream
@@ -198,7 +205,8 @@ void dma_enable(DMA_TypeDef *DMAx, uint32_t stream);
  * @param DMAx DMA instance (DMA1 or DMA2)
  * @param stream Stream number (0-7)
  */
-void dma_disable(DMA_TypeDef *DMAx, uint32_t stream);
+DriverStatus dma_disable(DMA_TypeDef *DMAx, uint32_t stream,
+                         uint32_t timeout_cycles);
 
 /**
  * @brief Enable DMA interrupt
@@ -207,7 +215,8 @@ void dma_disable(DMA_TypeDef *DMAx, uint32_t stream);
  * @param stream Stream number (0-7)
  * @param interrupt Interrupts to enable (combination of DMA_IT_xx flags)
  */
-void dma_enable_interrupt(DMA_TypeDef *DMAx, uint32_t stream, uint32_t interrupt);
+DriverStatus dma_enable_interrupt(DMA_TypeDef *DMAx, uint32_t stream,
+                                  uint32_t interrupt);
 
 /**
  * @brief Disable DMA interrupt
@@ -216,7 +225,8 @@ void dma_enable_interrupt(DMA_TypeDef *DMAx, uint32_t stream, uint32_t interrupt
  * @param stream Stream number (0-7)
  * @param interrupt Interrupts to disable (combination of DMA_IT_xx flags)
  */
-void dma_disable_interrupt(DMA_TypeDef *DMAx, uint32_t stream, uint32_t interrupt);
+DriverStatus dma_disable_interrupt(DMA_TypeDef *DMAx, uint32_t stream,
+                                   uint32_t interrupt);
 
 /**
  * @brief Get DMA transfer complete flag status

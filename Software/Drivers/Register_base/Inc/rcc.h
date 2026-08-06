@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stm32f4xx.h>
+#include "driver_status.h"
 
 extern uint32_t system_clock;
 /**
@@ -26,6 +27,11 @@ typedef enum {
     RCC_CLOCK_HSE = 1,   /**< High-Speed External Clock */
     RCC_CLOCK_PLL = 2    /**< Phase-Locked Loop */
 } RCC_ClockSourceTypeDef;
+
+typedef enum {
+    RCC_PLL_SOURCE_HSI = 0,
+    RCC_PLL_SOURCE_HSE = 1
+} RCC_PLLSourceTypeDef;
 
 /**
  * @brief AHB prescaler values
@@ -58,6 +64,8 @@ typedef enum {
  */
 typedef struct {
     RCC_ClockSourceTypeDef ClockSource;     /**< System clock source */
+    RCC_PLLSourceTypeDef PLLSource;         /**< PLL input clock source */
+    uint32_t HSEFrequency;                  /**< External oscillator frequency */
     uint8_t PLL_M;                          /**< PLL division factor for main PLL input clock */
     uint16_t PLL_N;                         /**< PLL multiplication factor for VCO */
     uint8_t PLL_P;                          /**< PLL division factor for main system clock */
@@ -72,9 +80,9 @@ typedef struct {
  * @brief Configure the system clock
  * 
  * @param config Pointer to clock configuration structure
- * @return uint8_t 0 if successful, 1 if error occurred
+ * @return DriverStatus describing success or the failure reason
  */
-uint8_t rcc_system_clock_config(RCC_ClockConfigTypeDef *config);
+DriverStatus rcc_system_clock_config(const RCC_ClockConfigTypeDef *config);
 
 /**
  * @brief Enable peripheral clock for a GPIO port
@@ -137,9 +145,9 @@ void rcc_enable_spi_clock(SPI_TypeDef *SPIx);
  * @param use_hse 0 to use internal oscillator (HSI), 1 to use external crystal (HSE)
  * @param hse_freq External crystal frequency in Hz (typically 8000000 for 8MHz)
  *                 This parameter is ignored when use_hse = 0
- * @return uint8_t 0 if successful, 1 if error occurred
+ * @return DriverStatus describing success or the failure reason
  */
-uint8_t rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq);
+DriverStatus rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq);
 
 /**
  * @brief Get APB1 peripheral clock frequency

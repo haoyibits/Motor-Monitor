@@ -11,7 +11,9 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "bsp.h"
+#include <stddef.h>
+
+#include "gpio.h"
 
 
 /**
@@ -30,6 +32,10 @@
  * @note GPIO clock must be enabled separately via RCC_AHB1ENR
  */
 void gpio_init(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t mode, uint8_t otype, uint8_t speed, uint8_t pupd) {
+    if ((GPIOx == NULL) || (pin >= 16U) || (mode > 3U) ||
+        (otype > 1U) || (speed > 3U) || (pupd > 2U)) {
+        return;
+    }
     // Set mode
     GPIOx->MODER &= ~(0x3 << (pin * 2));
     GPIOx->MODER |= (mode << (pin * 2));
@@ -55,6 +61,7 @@ void gpio_init(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t mode, uint8_t otype, ui
  * @param value Pin value (1=high, 0=low)
  */
 void gpio_write(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t value) {
+    if ((GPIOx == NULL) || (pin >= 16U)) return;
     if (value) {
         GPIOx->BSRR = (1 << pin); // Set pin
     } else {
@@ -72,6 +79,7 @@ void gpio_write(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t value) {
  * @return uint8_t 1 if high, 0 if low
  */
 uint8_t gpio_read(GPIO_TypeDef *GPIOx, uint8_t pin) {
+    if ((GPIOx == NULL) || (pin >= 16U)) return 0U;
     return (GPIOx->IDR & (1 << pin)) ? 1 : 0;
 }
 
@@ -84,7 +92,8 @@ uint8_t gpio_read(GPIO_TypeDef *GPIOx, uint8_t pin) {
  * @param pin Pin number (0-15)
  */
 void gpio_toggle(GPIO_TypeDef *GPIOx, uint8_t pin) {
-    if (gpio_read(GPIOx, pin)) {
+    if ((GPIOx == NULL) || (pin >= 16U)) return;
+    if ((GPIOx->ODR & (1UL << pin)) != 0U) {
         gpio_write(GPIOx, pin, 0);
     } else {
         gpio_write(GPIOx, pin, 1);
@@ -105,6 +114,7 @@ void gpio_toggle(GPIO_TypeDef *GPIOx, uint8_t pin) {
  *       pin mode is set to GPIO_MODE_AF using gpio_init()
  */
 void gpio_set_af(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t alternate) {
+    if ((GPIOx == NULL) || (pin >= 16U) || (alternate > 15U)) return;
     /* Configure alternate function mode */
     if (pin < 8) {
         /* Configure AFR[0] for pins 0-7 */
@@ -134,6 +144,7 @@ void gpio_set_af(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t alternate) {
  * @note SYSCFG clock must be enabled via RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN
  */
 void gpio_configure_interrupt(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t trigger_type, uint8_t priority) {
+    if ((GPIOx == NULL) || (pin >= 16U)) return;
     /* Enable SYSCFG clock if not already enabled */
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
     
@@ -148,6 +159,7 @@ void gpio_configure_interrupt(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t trigger_
     else if (GPIOx == GPIOG) port_index = 6;
     else if (GPIOx == GPIOH) port_index = 7;
     else if (GPIOx == GPIOI) port_index = 8;
+    else return;
     
     /* Configure EXTI line source */
     uint8_t reg_index = pin / 4;
@@ -169,6 +181,9 @@ void gpio_configure_interrupt(GPIO_TypeDef *GPIOx, uint8_t pin, uint8_t trigger_
         EXTI->FTSR &= ~(1U << pin); /* Disable falling edge trigger */
     }
     
+    /* Clear a stale pending edge before enabling the line. */
+    EXTI->PR = (1U << pin);
+
     /* Enable EXTI line */
     EXTI->IMR |= (1U << pin);
     

@@ -62,7 +62,7 @@ typedef struct {
  * @param system_clock_hz System clock frequency in Hz (e.g., 168000000 for 168MHz)
  * @return uint8_t 0 if successful, 1 if reload value exceeds 24-bit limit
  * 
- * @note Maximum supported clock frequency is ~16.7MHz due to 24-bit reload register
+ * @note At a 1 ms tick, the 24-bit reload supports clocks up to about 16.7 GHz
  * @warning Call this function before enabling interrupts
  */
 uint8_t systick_init(uint32_t system_clock_hz);
@@ -177,4 +177,3 @@ uint8_t systick_timer_expired(SysTick_Timer_t *timer);
 /** @} */
 
 #endif /* SYSTICK_H */
-

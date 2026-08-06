@@ -1,387 +1,328 @@
 /**
  * @file rcc.c
- * @author Haoyi Chen
- * @date 2025-08-08
- * @brief STM32F4 RCC (Reset and Clock Control) register-level driver
- *
- * @details This file provides functions for configuring the system clock and
- * peripheral clocks for STM32F407 series microcontrollers. All operations are
- * performed at the register level, without using HAL or LL libraries.
- *
- * Created for personal learning and embedded systems experimentation.
+ * @brief STM32F407 RCC register-level driver.
  */
 
-#include "bsp.h"
+#include <stddef.h>
 
+#include "rcc.h"
 
-/* Private variables for tracking clock frequencies */
-static uint32_t HSE_VALUE = 8000000; /* Default HSE frequency (8MHz) */
-static uint32_t SystemClockFreq = 16000000; /* Default HSI frequency */
-static uint32_t HCLKFreq = 16000000;
-static uint32_t PCLK1Freq = 16000000;
-static uint32_t PCLK2Freq = 16000000;
-uint32_t system_clock =168 * 1000000; /* 168MHz system clock */
-/**
- * @brief Configure the system clock
- * 
- * @details Sets up the system clock according to the provided configuration.
- *          Handles PLL configuration, clock source selection, prescalers, and flash latency.
- * 
- * @param config Pointer to clock configuration structure
- * @return uint8_t 0 if successful, 1 if error occurred
- */
-uint8_t rcc_system_clock_config(RCC_ClockConfigTypeDef *config) {
-    uint32_t timeout = 0;
-    uint32_t pll_source = 0;
-    uint32_t system_clock_freq = 0;
-    
-    /* Configure Flash latency */
-    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | (config->Latency << FLASH_ACR_LATENCY_Pos);
-    
-    /* Configure clock source */
-    switch (config->ClockSource) {
-        case RCC_CLOCK_HSI:
-            /* Enable HSI if not already on */
-            if ((RCC->CR & RCC_CR_HSION) == 0) {
-                RCC->CR |= RCC_CR_HSION;
-                /* Wait for HSI to be stable */
-                timeout = 10000;
-                while ((RCC->CR & RCC_CR_HSIRDY) == 0) {
-                    if (--timeout == 0) return 1;
-                }
-            }
-            system_clock_freq = 16000000; /* HSI is fixed at 16MHz */
-            /* Select HSI as system clock */
-            RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_HSI;
-            /* Wait for HSI to be used as system clock */
-            timeout = 10000;
-            while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSI) {
-                if (--timeout == 0) return 1;
-            }
-            break;
-            
-        case RCC_CLOCK_HSE:
-            /* Enable HSE */
-            RCC->CR |= RCC_CR_HSEON;
-            /* Wait for HSE to be stable */
-            timeout = 10000;
-            while ((RCC->CR & RCC_CR_HSERDY) == 0) {
-                if (--timeout == 0) return 1;
-            }
-            system_clock_freq = HSE_VALUE; /* HSE_VALUE defined in system header */
-            /* Select HSE as system clock */
-            RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_HSE;
-            /* Wait for HSE to be used as system clock */
-            timeout = 10000;
-            while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSE) {
-                if (--timeout == 0) return 1;
-            }
-            break;
-            
-        case RCC_CLOCK_PLL:
-            /* Disable PLL first */
-            RCC->CR &= ~RCC_CR_PLLON;
-            /* Wait till PLL is disabled */
-            timeout = 10000;
-            while ((RCC->CR & RCC_CR_PLLRDY) != 0) {
-                if (--timeout == 0) return 1;
-            }
-            
-            /* Select PLL source */
-            if (RCC->PLLCFGR & RCC_PLLCFGR_PLLSRC) {
-                pll_source = HSE_VALUE; /* HSE is PLL source */
-            } else {
-                pll_source = 16000000; /* HSI is PLL source */
-            }
-            
-            /* Configure the main PLL */
-            RCC->PLLCFGR = (config->PLL_M << RCC_PLLCFGR_PLLM_Pos) |
-                           (config->PLL_N << RCC_PLLCFGR_PLLN_Pos) |
-                           ((config->PLL_P >> 1) - 1) << RCC_PLLCFGR_PLLP_Pos |
-                           (config->PLL_Q << RCC_PLLCFGR_PLLQ_Pos);
-            
-            /* Enable PLL */
-            RCC->CR |= RCC_CR_PLLON;
-            /* Wait till PLL is ready */
-            timeout = 10000;
-            while ((RCC->CR & RCC_CR_PLLRDY) == 0) {
-                if (--timeout == 0) return 1;
-            }
-            
-            /* Calculate PLL output frequency */
-            system_clock_freq = (pll_source / config->PLL_M) * config->PLL_N / config->PLL_P;
-            
-            /* Select PLL as system clock source */
-            RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_PLL;
-            /* Wait till PLL is used as system clock source */
-            timeout = 10000;
-            while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_PLL) {
-                if (--timeout == 0) return 1;
-            }
-            break;
-            
-        default:
-            return 1; /* Invalid clock source */
+#define RCC_HSI_FREQUENCY 16000000UL
+#define RCC_MAX_SYSCLK    168000000UL
+#define RCC_READY_TIMEOUT 1000000UL
+
+static uint32_t hclk_frequency = RCC_HSI_FREQUENCY;
+static uint32_t pclk1_frequency = RCC_HSI_FREQUENCY;
+static uint32_t pclk2_frequency = RCC_HSI_FREQUENCY;
+uint32_t system_clock = RCC_HSI_FREQUENCY;
+
+static DriverStatus rcc_wait_mask(volatile uint32_t *reg, uint32_t mask,
+                                  uint32_t expected)
+{
+    uint32_t timeout = RCC_READY_TIMEOUT;
+    while (timeout > 0U) {
+        if ((*reg & mask) == expected) {
+            return DRIVER_STATUS_OK;
+        }
+        --timeout;
     }
-    
-    /* Configure the HCLK, PCLK1, and PCLK2 clock dividers */
-    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_HPRE) | (config->AHB_Prescaler << RCC_CFGR_HPRE_Pos);
-    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE1) | (config->APB1_Prescaler << RCC_CFGR_PPRE1_Pos);
-    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE2) | (config->APB2_Prescaler << RCC_CFGR_PPRE2_Pos);
-    
-    /* Update the global clock frequency variables */
-    SystemClockFreq = system_clock_freq;
-    
-    /* Calculate HCLK frequency */
-    if ((config->AHB_Prescaler & 0x08) == 0) {
-        HCLKFreq = SystemClockFreq; /* Not divided */
+    return DRIVER_STATUS_TIMEOUT;
+}
+
+static uint32_t rcc_ahb_divisor(RCC_AHB_PrescalerTypeDef prescaler)
+{
+    static const uint16_t divisors[8] = {2U, 4U, 8U, 16U, 64U, 128U, 256U, 512U};
+    uint32_t encoding = (uint32_t)prescaler;
+    return (encoding < 8U) ? 1U : divisors[encoding - 8U];
+}
+
+static uint32_t rcc_apb_divisor(RCC_APB_PrescalerTypeDef prescaler)
+{
+    uint32_t encoding = (uint32_t)prescaler;
+    return (encoding < 4U) ? 1U : (1UL << (encoding - 3U));
+}
+
+static uint8_t rcc_ahb_prescaler_valid(RCC_AHB_PrescalerTypeDef prescaler)
+{
+    uint32_t value = (uint32_t)prescaler;
+    return ((value == RCC_AHB_DIV1) ||
+            ((value >= RCC_AHB_DIV2) && (value <= RCC_AHB_DIV512))) ? 1U : 0U;
+}
+
+static uint8_t rcc_apb_prescaler_valid(RCC_APB_PrescalerTypeDef prescaler)
+{
+    uint32_t value = (uint32_t)prescaler;
+    return ((value == RCC_APB_DIV1) ||
+            ((value >= RCC_APB_DIV2) && (value <= RCC_APB_DIV16))) ? 1U : 0U;
+}
+
+static uint8_t rcc_flash_latency_required(uint32_t hclk)
+{
+    if (hclk > 150000000UL) return 5U;
+    if (hclk > 120000000UL) return 4U;
+    if (hclk > 90000000UL) return 3U;
+    if (hclk > 60000000UL) return 2U;
+    if (hclk > 30000000UL) return 1U;
+    return 0U;
+}
+
+static DriverStatus rcc_enable_source(RCC_PLLSourceTypeDef source)
+{
+    if (source == RCC_PLL_SOURCE_HSE) {
+        RCC->CR |= RCC_CR_HSEON;
+        return rcc_wait_mask(&RCC->CR, RCC_CR_HSERDY, RCC_CR_HSERDY);
+    }
+    RCC->CR |= RCC_CR_HSION;
+    return rcc_wait_mask(&RCC->CR, RCC_CR_HSIRDY, RCC_CR_HSIRDY);
+}
+
+static DriverStatus rcc_switch_system_clock(uint32_t sw, uint32_t sws)
+{
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | sw;
+    return rcc_wait_mask(&RCC->CFGR, RCC_CFGR_SWS, sws);
+}
+
+static DriverStatus rcc_validate_config(const RCC_ClockConfigTypeDef *config,
+                                        uint32_t *sysclk,
+                                        uint32_t *hclk)
+{
+    if ((config == NULL) || (sysclk == NULL) || (hclk == NULL) ||
+        (!rcc_ahb_prescaler_valid(config->AHB_Prescaler)) ||
+        (!rcc_apb_prescaler_valid(config->APB1_Prescaler)) ||
+        (!rcc_apb_prescaler_valid(config->APB2_Prescaler)) ||
+        (config->Latency > 7U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    uint32_t source_frequency;
+    if (config->ClockSource == RCC_CLOCK_HSI) {
+        source_frequency = RCC_HSI_FREQUENCY;
+    } else if (config->ClockSource == RCC_CLOCK_HSE) {
+        source_frequency = config->HSEFrequency;
+        if ((source_frequency < 4000000UL) ||
+            (source_frequency > 26000000UL)) {
+            return DRIVER_STATUS_OUT_OF_RANGE;
+        }
+    } else if (config->ClockSource == RCC_CLOCK_PLL) {
+        source_frequency = (config->PLLSource == RCC_PLL_SOURCE_HSE) ?
+                           config->HSEFrequency : RCC_HSI_FREQUENCY;
+        if ((config->PLLSource != RCC_PLL_SOURCE_HSI) &&
+            (config->PLLSource != RCC_PLL_SOURCE_HSE)) {
+            return DRIVER_STATUS_INVALID_ARGUMENT;
+        }
+        if ((config->PLLSource == RCC_PLL_SOURCE_HSE) &&
+            ((source_frequency < 4000000UL) ||
+             (source_frequency > 26000000UL))) {
+            return DRIVER_STATUS_OUT_OF_RANGE;
+        }
+        if ((source_frequency == 0U) || (config->PLL_M < 2U) ||
+            (config->PLL_M > 63U) || (config->PLL_N < 50U) ||
+            (config->PLL_N > 432U) || (config->PLL_Q < 2U) ||
+            (config->PLL_Q > 15U) ||
+            ((config->PLL_P != 2U) && (config->PLL_P != 4U) &&
+             (config->PLL_P != 6U) && (config->PLL_P != 8U))) {
+            return DRIVER_STATUS_INVALID_ARGUMENT;
+        }
+
+        uint32_t pll_input = source_frequency / config->PLL_M;
+        uint64_t vco = ((uint64_t)source_frequency * config->PLL_N) /
+                       config->PLL_M;
+        if ((pll_input < 1000000UL) || (pll_input > 2000000UL) ||
+            (vco < 100000000ULL) || (vco > 432000000ULL)) {
+            return DRIVER_STATUS_OUT_OF_RANGE;
+        }
+        source_frequency = (uint32_t)(vco / config->PLL_P);
     } else {
-        HCLKFreq = SystemClockFreq >> (((config->AHB_Prescaler & 0x07) + 1));
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Calculate PCLK1 frequency */
-    if ((config->APB1_Prescaler & 0x04) == 0) {
-        PCLK1Freq = HCLKFreq; /* Not divided */
+
+    uint32_t calculated_hclk = source_frequency /
+                               rcc_ahb_divisor(config->AHB_Prescaler);
+    if ((source_frequency > RCC_MAX_SYSCLK) ||
+        (calculated_hclk > RCC_MAX_SYSCLK) ||
+        ((calculated_hclk / rcc_apb_divisor(config->APB1_Prescaler)) >
+         42000000UL) ||
+        ((calculated_hclk / rcc_apb_divisor(config->APB2_Prescaler)) >
+         84000000UL) ||
+        (config->Latency < rcc_flash_latency_required(calculated_hclk))) {
+        return DRIVER_STATUS_OUT_OF_RANGE;
+    }
+
+    *sysclk = source_frequency;
+    *hclk = calculated_hclk;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus rcc_system_clock_config(const RCC_ClockConfigTypeDef *config)
+{
+    uint32_t sysclk;
+    uint32_t hclk;
+    DriverStatus status = rcc_validate_config(config, &sysclk, &hclk);
+    if (status != DRIVER_STATUS_OK) {
+        return status;
+    }
+
+    /* Move to the known-safe HSI clock before changing dividers or PLL fields. */
+    status = rcc_enable_source(RCC_PLL_SOURCE_HSI);
+    if (status == DRIVER_STATUS_OK) {
+        status = rcc_switch_system_clock(RCC_CFGR_SW_HSI,
+                                         RCC_CFGR_SWS_HSI);
+    }
+    if (status != DRIVER_STATUS_OK) {
+        return status;
+    }
+
+    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
+    PWR->CR |= PWR_CR_VOS;
+    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) |
+                 ((uint32_t)config->Latency << FLASH_ACR_LATENCY_Pos) |
+                 FLASH_ACR_PRFTEN | FLASH_ACR_ICEN | FLASH_ACR_DCEN;
+
+    RCC->CFGR = (RCC->CFGR & ~(RCC_CFGR_HPRE | RCC_CFGR_PPRE1 |
+                               RCC_CFGR_PPRE2)) |
+                ((uint32_t)config->AHB_Prescaler << RCC_CFGR_HPRE_Pos) |
+                ((uint32_t)config->APB1_Prescaler << RCC_CFGR_PPRE1_Pos) |
+                ((uint32_t)config->APB2_Prescaler << RCC_CFGR_PPRE2_Pos);
+
+    if (config->ClockSource == RCC_CLOCK_PLL) {
+        status = rcc_enable_source(config->PLLSource);
+        if (status != DRIVER_STATUS_OK) return status;
+
+        RCC->CR &= ~RCC_CR_PLLON;
+        status = rcc_wait_mask(&RCC->CR, RCC_CR_PLLRDY, 0U);
+        if (status != DRIVER_STATUS_OK) return status;
+
+        uint32_t pll_source_bit = (config->PLLSource == RCC_PLL_SOURCE_HSE) ?
+                                  RCC_PLLCFGR_PLLSRC : 0U;
+        RCC->PLLCFGR = ((uint32_t)config->PLL_M << RCC_PLLCFGR_PLLM_Pos) |
+                       ((uint32_t)config->PLL_N << RCC_PLLCFGR_PLLN_Pos) |
+                       ((((uint32_t)config->PLL_P / 2U) - 1U) <<
+                        RCC_PLLCFGR_PLLP_Pos) |
+                       ((uint32_t)config->PLL_Q << RCC_PLLCFGR_PLLQ_Pos) |
+                       pll_source_bit;
+        RCC->CR |= RCC_CR_PLLON;
+        status = rcc_wait_mask(&RCC->CR, RCC_CR_PLLRDY, RCC_CR_PLLRDY);
+        if (status == DRIVER_STATUS_OK) {
+            status = rcc_switch_system_clock(RCC_CFGR_SW_PLL,
+                                             RCC_CFGR_SWS_PLL);
+        }
+    } else if (config->ClockSource == RCC_CLOCK_HSE) {
+        status = rcc_enable_source(RCC_PLL_SOURCE_HSE);
+        if (status == DRIVER_STATUS_OK) {
+            status = rcc_switch_system_clock(RCC_CFGR_SW_HSE,
+                                             RCC_CFGR_SWS_HSE);
+        }
     } else {
-        PCLK1Freq = HCLKFreq >> (((config->APB1_Prescaler & 0x03) + 1));
-    }
-    
-    /* Calculate PCLK2 frequency */
-    if ((config->APB2_Prescaler & 0x04) == 0) {
-        PCLK2Freq = HCLKFreq; /* Not divided */
-    } else {
-        PCLK2Freq = HCLKFreq >> (((config->APB2_Prescaler & 0x03) + 1));
-    }
-    
-    return 0; /* Configuration successful */
-}
-
-/**
- * @brief Enable peripheral clock for a GPIO port
- * 
- * @param GPIOx Pointer to GPIO port (e.g. GPIOA, GPIOB)
- */
-void rcc_enable_gpio_clock(GPIO_TypeDef *GPIOx) {
-    if (GPIOx == GPIOA)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
-    else if (GPIOx == GPIOB)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
-    else if (GPIOx == GPIOC)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
-    else if (GPIOx == GPIOD)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;
-    else if (GPIOx == GPIOE)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOEEN;
-    else if (GPIOx == GPIOF)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOFEN;
-    else if (GPIOx == GPIOG)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOGEN;
-    else if (GPIOx == GPIOH)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOHEN;
-    else if (GPIOx == GPIOI)
-        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOIEN;
-}
-
-/**
- * @brief Enable peripheral clock for a timer
- * 
- * @param TIMx Pointer to timer (e.g. TIM1, TIM2)
- */
-void rcc_enable_tim_clock(TIM_TypeDef *TIMx) {
-    if (TIMx == TIM1)
-        RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
-    else if (TIMx == TIM2)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
-    else if (TIMx == TIM3)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
-    else if (TIMx == TIM4)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;
-    else if (TIMx == TIM5)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;
-    else if (TIMx == TIM6)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
-    else if (TIMx == TIM7)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM7EN;
-    else if (TIMx == TIM8)
-        RCC->APB2ENR |= RCC_APB2ENR_TIM8EN;
-    else if (TIMx == TIM9)
-        RCC->APB2ENR |= RCC_APB2ENR_TIM9EN;
-    else if (TIMx == TIM10)
-        RCC->APB2ENR |= RCC_APB2ENR_TIM10EN;
-    else if (TIMx == TIM11)
-        RCC->APB2ENR |= RCC_APB2ENR_TIM11EN;
-    else if (TIMx == TIM12)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM12EN;
-    else if (TIMx == TIM13)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM13EN;
-    else if (TIMx == TIM14)
-        RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
-}
-
-/**
- * @brief Enable peripheral clock for ADC
- * 
- * @param ADCx Pointer to ADC (e.g. ADC1, ADC2)
- */
-void rcc_enable_adc_clock(ADC_TypeDef *ADCx) {
-    if (ADCx == ADC1)
-        RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
-    else if (ADCx == ADC2)
-        RCC->APB2ENR |= RCC_APB2ENR_ADC2EN;
-    else if (ADCx == ADC3)
-        RCC->APB2ENR |= RCC_APB2ENR_ADC3EN;
-}
-
-/**
- * @brief Enable peripheral clock for I2C
- * 
- * @param I2Cx Pointer to I2C (e.g. I2C1, I2C2)
- */
-void rcc_enable_i2c_clock(I2C_TypeDef *I2Cx) {
-    if (I2Cx == I2C1)
-        RCC->APB1ENR |= RCC_APB1ENR_I2C1EN;
-    else if (I2Cx == I2C2)
-        RCC->APB1ENR |= RCC_APB1ENR_I2C2EN;
-    else if (I2Cx == I2C3)
-        RCC->APB1ENR |= RCC_APB1ENR_I2C3EN;
-}
-
-/**
- * @brief Enable DMA clocks
- * 
- * @param DMA_number Pointer to DMA instance (DMA1 or DMA2)
- */
-void rcc_enable_dma_clock(DMA_TypeDef *DMA_number) {
-    if (DMA_number == DMA1)
-        RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
-    else if (DMA_number == DMA2)
-        RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
-}
-
-/**
- * @brief Enable peripheral clock for USART/UART
- * 
- * @param USARTx Pointer to USART (e.g. USART1, USART2, UART4)
- */
-void rcc_enable_usart_clock(USART_TypeDef *USARTx) {
-    if (USARTx == USART1)
-        RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
-    else if (USARTx == USART2)
-        RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
-    else if (USARTx == USART3)
-        RCC->APB1ENR |= RCC_APB1ENR_USART3EN;
-    else if (USARTx == UART4)
-        RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
-    else if (USARTx == UART5)
-        RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
-    else if (USARTx == USART6)
-        RCC->APB2ENR |= RCC_APB2ENR_USART6EN;
-}
-
-/**
- * @brief Configure and set system to maximum frequency using either HSI or HSE
- * 
- * @details This is a convenient function to set the system clock to 168MHz,
- *          which is the maximum frequency for STM32F407. It can use either
- *          the HSI (internal oscillator) or HSE (external crystal) as the 
- *          PLL clock source, depending on the use_hse parameter.
- * 
- * @param use_hse 0 to use internal oscillator (HSI), 1 to use external crystal (HSE)
- * @param hse_freq External crystal frequency in Hz (typically 8000000 for 8MHz)
- *                 This parameter is ignored when use_hse = 0
- * @return uint8_t 0 if successful, 1 if error occurred
- */
-uint8_t rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq) {
-    RCC_ClockConfigTypeDef config;
-
-    /* Configure for 168MHz operation */
-    config.ClockSource = RCC_CLOCK_PLL;
-
-    if (use_hse) {
-        /* Using HSE as PLL source */
-        RCC->PLLCFGR |= RCC_PLLCFGR_PLLSRC;  /* Set PLLSRC bit for HSE */
-        config.PLL_M = hse_freq / 2000000;   /* HSE_freq / M = 2MHz */
-    } else {
-        /* Using HSI as PLL source (16MHz) */
-        RCC->PLLCFGR &= ~RCC_PLLCFGR_PLLSRC; /* Clear PLLSRC bit for HSI */
-        config.PLL_M = 8;                   /* 16MHz / 8 = 2MHz */
+        status = rcc_enable_source(RCC_PLL_SOURCE_HSI);
+        if (status == DRIVER_STATUS_OK) {
+            status = rcc_switch_system_clock(RCC_CFGR_SW_HSI,
+                                             RCC_CFGR_SWS_HSI);
+        }
     }
 
-    config.PLL_N = 168;          /* 2MHz * 168 = 336MHz */
-    config.PLL_P = 2;            /* 336MHz / 2 = 168MHz */
-    config.PLL_Q = 7;            /* USB clock = 336MHz / 7 = 48MHz */
-    config.AHB_Prescaler = RCC_AHB_DIV1;   /* AHB at 168MHz */
-    config.APB1_Prescaler = RCC_APB_DIV4;  /* APB1 at 42MHz */
-    config.APB2_Prescaler = RCC_APB_DIV2;  /* APB2 at 84MHz */
-    config.Latency = 5;          /* 5 wait states for 168MHz operation */
+    if (status != DRIVER_STATUS_OK) {
+        return status;
+    }
+
+    hclk_frequency = hclk;
+    pclk1_frequency = hclk / rcc_apb_divisor(config->APB1_Prescaler);
+    pclk2_frequency = hclk / rcc_apb_divisor(config->APB2_Prescaler);
+    system_clock = hclk;
+    SystemCoreClock = hclk;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus rcc_config_max_frequency(uint8_t use_hse, uint32_t hse_freq)
+{
+    RCC_ClockConfigTypeDef config = {
+        .ClockSource = RCC_CLOCK_PLL,
+        .PLLSource = use_hse ? RCC_PLL_SOURCE_HSE : RCC_PLL_SOURCE_HSI,
+        .HSEFrequency = use_hse ? hse_freq : 0U,
+        .PLL_M = use_hse ? (uint8_t)(hse_freq / 1000000UL) : 8U,
+        .PLL_N = use_hse ? 336U : 168U,
+        .PLL_P = 2U,
+        .PLL_Q = 7U,
+        .AHB_Prescaler = RCC_AHB_DIV1,
+        .APB1_Prescaler = RCC_APB_DIV4,
+        .APB2_Prescaler = RCC_APB_DIV2,
+        .Latency = 5U
+    };
+
+    if (use_hse && ((hse_freq < 4000000UL) ||
+                    (hse_freq > 26000000UL) ||
+                    ((hse_freq % 1000000UL) != 0U))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
     return rcc_system_clock_config(&config);
 }
 
-/**
- * @brief Get APB1 peripheral clock frequency
- * 
- * @return uint32_t APB1 clock frequency in Hz
- */
-uint32_t rcc_get_pclk1_freq(void)
+uint32_t rcc_get_pclk1_freq(void) { return pclk1_frequency; }
+uint32_t rcc_get_pclk2_freq(void) { return pclk2_frequency; }
+
+void rcc_enable_gpio_clock(GPIO_TypeDef *gpio)
 {
-    uint32_t pclk1;
-    uint32_t apb1_prescaler;
-    
-    /* Get APB1 prescaler value from CFGR register */
-    apb1_prescaler = (RCC->CFGR & RCC_CFGR_PPRE1) >> RCC_CFGR_PPRE1_Pos;
-    
-    /* Calculate PCLK1 frequency based on prescaler */
-    if ((apb1_prescaler & 0x04) == 0) {
-        /* APB1 clock not divided */
-        pclk1 = system_clock;
-    } else {
-        /* APB1 clock divided by 2, 4, 8, or 16 */
-        pclk1 = system_clock >> (((apb1_prescaler & 0x03) + 1));
-    }
-    
-    return pclk1;
+    if (gpio == GPIOA) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    else if (gpio == GPIOB) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+    else if (gpio == GPIOC) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    else if (gpio == GPIOD) RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;
+    else if (gpio == GPIOE) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOEEN;
+    else if (gpio == GPIOF) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOFEN;
+    else if (gpio == GPIOG) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOGEN;
+    else if (gpio == GPIOH) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOHEN;
+    else if (gpio == GPIOI) RCC->AHB1ENR |= RCC_AHB1ENR_GPIOIEN;
 }
 
-/**
- * @brief Get APB2 peripheral clock frequency
- * 
- * @return uint32_t APB2 clock frequency in Hz
- */
-uint32_t rcc_get_pclk2_freq(void)
+void rcc_enable_tim_clock(TIM_TypeDef *tim)
 {
-    uint32_t pclk2;
-    uint32_t apb2_prescaler;
-    
-    /* Get APB2 prescaler value from CFGR register */
-    apb2_prescaler = (RCC->CFGR & RCC_CFGR_PPRE2) >> RCC_CFGR_PPRE2_Pos;
-    
-    /* Calculate PCLK2 frequency based on prescaler */
-    if ((apb2_prescaler & 0x04) == 0) {
-        /* APB2 clock not divided */
-        pclk2 = system_clock;
-    } else {
-        /* APB2 clock divided by 2, 4, 8, or 16 */
-        pclk2 = system_clock >> (((apb2_prescaler & 0x03) + 1));
-    }
-    
-    return pclk2;
+    if (tim == TIM1) RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
+    else if (tim == TIM2) RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    else if (tim == TIM3) RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+    else if (tim == TIM4) RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;
+    else if (tim == TIM5) RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;
+    else if (tim == TIM6) RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+    else if (tim == TIM7) RCC->APB1ENR |= RCC_APB1ENR_TIM7EN;
+    else if (tim == TIM8) RCC->APB2ENR |= RCC_APB2ENR_TIM8EN;
+    else if (tim == TIM9) RCC->APB2ENR |= RCC_APB2ENR_TIM9EN;
+    else if (tim == TIM10) RCC->APB2ENR |= RCC_APB2ENR_TIM10EN;
+    else if (tim == TIM11) RCC->APB2ENR |= RCC_APB2ENR_TIM11EN;
+    else if (tim == TIM12) RCC->APB1ENR |= RCC_APB1ENR_TIM12EN;
+    else if (tim == TIM13) RCC->APB1ENR |= RCC_APB1ENR_TIM13EN;
+    else if (tim == TIM14) RCC->APB1ENR |= RCC_APB1ENR_TIM14EN;
 }
 
-/**
- * @brief Enable peripheral clock for SPI
- * 
- * @param SPIx Pointer to SPI (e.g. SPI1, SPI2, SPI3)
- */
-void rcc_enable_spi_clock(SPI_TypeDef *SPIx)
+void rcc_enable_adc_clock(ADC_TypeDef *adc)
 {
-    if (SPIx == SPI1) {
-        /* SPI1 is on APB2 bus */
-        RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
-    } else if (SPIx == SPI2) {
-        /* SPI2 is on APB1 bus */
-        RCC->APB1ENR |= RCC_APB1ENR_SPI2EN;
-    } else if (SPIx == SPI3) {
-        /* SPI3 is on APB1 bus */
-        RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;
-    }
+    if (adc == ADC1) RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
+    else if (adc == ADC2) RCC->APB2ENR |= RCC_APB2ENR_ADC2EN;
+    else if (adc == ADC3) RCC->APB2ENR |= RCC_APB2ENR_ADC3EN;
+}
+
+void rcc_enable_i2c_clock(I2C_TypeDef *i2c)
+{
+    if (i2c == I2C1) RCC->APB1ENR |= RCC_APB1ENR_I2C1EN;
+    else if (i2c == I2C2) RCC->APB1ENR |= RCC_APB1ENR_I2C2EN;
+    else if (i2c == I2C3) RCC->APB1ENR |= RCC_APB1ENR_I2C3EN;
+}
+
+void rcc_enable_dma_clock(DMA_TypeDef *dma)
+{
+    if (dma == DMA1) RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+    else if (dma == DMA2) RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
+}
+
+void rcc_enable_usart_clock(USART_TypeDef *usart)
+{
+    if (usart == USART1) RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+    else if (usart == USART2) RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+    else if (usart == USART3) RCC->APB1ENR |= RCC_APB1ENR_USART3EN;
+    else if (usart == UART4) RCC->APB1ENR |= RCC_APB1ENR_UART4EN;
+    else if (usart == UART5) RCC->APB1ENR |= RCC_APB1ENR_UART5EN;
+    else if (usart == USART6) RCC->APB2ENR |= RCC_APB2ENR_USART6EN;
+}
+
+void rcc_enable_spi_clock(SPI_TypeDef *spi)
+{
+    if (spi == SPI1) RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
+    else if (spi == SPI2) RCC->APB1ENR |= RCC_APB1ENR_SPI2EN;
+    else if (spi == SPI3) RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;
 }

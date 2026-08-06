@@ -11,7 +11,15 @@
  * Created for personal learning and embedded systems experimentation.
  */
 
-#include "bsp.h"
+#include <stddef.h>
+
+#include "adc.h"
+#include "gpio.h"
+
+static uint8_t adc_instance_valid(ADC_TypeDef *adc)
+{
+    return ((adc == ADC1) || (adc == ADC2) || (adc == ADC3)) ? 1U : 0U;
+}
 
 /**
  * @brief Initialize ADC with the specified parameters
@@ -24,7 +32,25 @@
  * 
  * @note ADC clock must be enabled separately via RCC registers before calling this function
  */
-void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init) {
+DriverStatus adc_init(ADC_TypeDef *ADCx, const ADC_InitTypeDef *init) {
+    if ((!adc_instance_valid(ADCx)) || (init == NULL) ||
+        ((init->Resolution != ADC_RESOLUTION_12BIT) &&
+         (init->Resolution != ADC_RESOLUTION_10BIT) &&
+         (init->Resolution != ADC_RESOLUTION_8BIT) &&
+         (init->Resolution != ADC_RESOLUTION_6BIT)) ||
+        ((init->Align != ADC_DATAALIGN_RIGHT) &&
+         (init->Align != ADC_DATAALIGN_LEFT)) ||
+        ((init->ScanMode != ADC_SCAN_DISABLE) &&
+         (init->ScanMode != ADC_SCAN_ENABLE)) ||
+        ((init->ContMode != ADC_CONTINUOUS_DISABLE) &&
+         (init->ContMode != ADC_CONTINUOUS_ENABLE)) ||
+        ((init->ExternalTrigger & ~ADC_CR2_EXTSEL) != 0U) ||
+        ((init->ExternalTrigConv & ~ADC_CR2_EXTEN) != 0U) ||
+        ((init->DataManagement != ADC_DMA_DISABLE) &&
+         (init->DataManagement != ADC_DMA_SINGLE) &&
+         (init->DataManagement != ADC_DMA_CIRCULAR))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
     /* Configure ADC clock prescaler to divide by 4 (PCLK2/4)
      * With PCLK2=84MHz, ADC clock will be 21MHz, optimal for ADC operation */
     ADC->CCR &= ~ADC_CCR_ADCPRE;         /* Clear ADCPRE bits */
@@ -35,11 +61,19 @@ void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init) {
     
     /* Wait for ADC to be fully disabled before configuration */
     uint32_t timeout = 10000;
-    while((ADCx->CR2 & ADC_CR2_ADON) && (timeout--));
+    while ((ADCx->CR2 & ADC_CR2_ADON) != 0U) {
+        if (timeout == 0U) {
+            return DRIVER_STATUS_TIMEOUT;
+        }
+        --timeout;
+    }
     
     /* 完全重置寄存器，然后重新配置 */
     ADCx->CR1 = 0;
     ADCx->CR2 = 0;
+    ADCx->SQR1 = 0U;
+    ADCx->SQR2 = 0U;
+    ADCx->SQR3 = 0U;
     
     /* Configure ADC resolution */
     ADCx->CR1 |= init->Resolution;
@@ -59,19 +93,8 @@ void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init) {
     /* Configure external trigger edge */
     ADCx->CR2 |= init->ExternalTrigConv;
     
-    /* Configure DMA mode */
-    if (init->DataManagement != ADC_DMA_DISABLE) {
-        /* Enable DMA mode */
-        ADCx->CR2 |= ADC_CR2_DMA;
-        
-        /* 修复: 在连续模式下始终设置DDS位，这是关键 */
-        if (init->ContMode == ADC_CONTINUOUS_ENABLE) {
-            ADCx->CR2 |= ADC_CR2_DDS;  /* 确保在连续模式下启用DDS位 */
-        }
-        else if (init->DataManagement == ADC_DMA_CIRCULAR) {
-            ADCx->CR2 |= ADC_CR2_DDS;  /* 循环DMA模式下也需要启用DDS位 */
-        }
-    }
+    ADCx->CR2 |= init->DataManagement & (ADC_CR2_DMA | ADC_CR2_DDS);
+    return DRIVER_STATUS_OK;
 }
 
 /**
@@ -84,13 +107,23 @@ void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init) {
  * 
  * @note Proper GPIO initialization and alternate function configuration must be done separately
  */
-void adc_config_channel(ADC_TypeDef *ADCx, ADC_ChannelConfTypeDef *config) {
+DriverStatus adc_config_channel(ADC_TypeDef *ADCx,
+                                const ADC_ChannelConfTypeDef *config) {
+    if ((!adc_instance_valid(ADCx)) || (config == NULL) ||
+        (config->Channel > ADC_CHANNEL_18) ||
+        (config->Rank < ADC_REGULAR_RANK_1) ||
+        (config->Rank > ADC_REGULAR_RANK_16) ||
+        (config->SamplingTime > ADC_SAMPLETIME_480CYCLES)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
     uint32_t channel = config->Channel;
     uint32_t rank = config->Rank;
     
     /* Configure the channel sequence length */
-    ADCx->SQR1 &= ~ADC_SQR1_L;
-    ADCx->SQR1 |= ((rank - 1) << 20);
+    uint32_t sequence_length = ((ADCx->SQR1 & ADC_SQR1_L) >> 20) + 1U;
+    if (rank > sequence_length) {
+        ADCx->SQR1 = (ADCx->SQR1 & ~ADC_SQR1_L) | ((rank - 1U) << 20);
+    }
     
     /* Configure the channel sequence */
     if (rank <= 6) {
@@ -117,6 +150,7 @@ void adc_config_channel(ADC_TypeDef *ADCx, ADC_ChannelConfTypeDef *config) {
         ADCx->SMPR1 &= ~(0x7 << shift);
         ADCx->SMPR1 |= (config->SamplingTime << shift);
     }
+    return DRIVER_STATUS_OK;
 }
 
 /**

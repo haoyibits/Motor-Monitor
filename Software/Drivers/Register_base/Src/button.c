@@ -8,7 +8,9 @@
  * shared systick timer and shift register debouncing for efficient multi-button scanning.
  */
 
-#include "bsp.h"
+#include <stddef.h>
+
+#include "button.h"
 
 /**
  * @brief Initialize button with configuration

@@ -22,20 +22,39 @@
  */
 void DMA2_Stream0_IRQHandler(void)
 {
+    uint32_t flags = DMA2->LISR;
+
+    if ((flags & (DMA_LISR_TEIF0 | DMA_LISR_DMEIF0 | DMA_LISR_FEIF0)) != 0U) {
+        DMA2->LIFCR = DMA_LIFCR_CTEIF0 | DMA_LIFCR_CDMEIF0 |
+                      DMA_LIFCR_CFEIF0 | DMA_LIFCR_CHTIF0 |
+                      DMA_LIFCR_CTCIF0;
+        current_adcDmaError = 1U;
+        return;
+    }
+
     // Half-transfer complete interrupt
-    if (DMA2->LISR & DMA_LISR_HTIF0) {
+    if ((flags & DMA_LISR_HTIF0) != 0U) {
         // Clear half-transfer complete flag
         DMA2->LIFCR = DMA_LIFCR_CHTIF0;
-        // No processing here - moved to main loop
+        uint32_t half_sum = 0U;
+        for (uint16_t i = 0U; i < 100U; ++i) {
+            half_sum += current_adcBuffer[i];
+        }
+        current_adcAverage = (uint16_t)(half_sum / 100U);
+        current_adcAverageReady = 1U;
     }
     
     // Transfer complete interrupt
-    if (DMA2->LISR & DMA_LISR_TCIF0) {
+    if ((flags & DMA_LISR_TCIF0) != 0U) {
         // Clear transfer complete flag
         DMA2->LIFCR = DMA_LIFCR_CTCIF0;
         
-        // Set flag to notify main loop that new data is ready
-        current_adcAverageReady = 1;
+        uint32_t half_sum = 0U;
+        for (uint16_t i = 100U; i < 200U; ++i) {
+            half_sum += current_adcBuffer[i];
+        }
+        current_adcAverage = (uint16_t)(half_sum / 100U);
+        current_adcAverageReady = 1U;
     }
 }
 

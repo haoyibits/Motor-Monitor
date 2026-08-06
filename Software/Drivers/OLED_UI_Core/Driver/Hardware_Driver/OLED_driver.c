@@ -58,7 +58,8 @@ static SSD1309_InitTypeDef oled_ssd1309 = {
     .I2Cx = OLED_I2C_PERIPHERAL,
     .DevAddress = OLED_I2C_ADDR,
     .Contrast = 128,           /* Default contrast */
-    .InvertDisplay = 0         /* Normal display */
+    .InvertDisplay = 0,        /* Normal display */
+    .I2CTimeoutCycles = I2C_DEFAULT_TIMEOUT_CYCLES
 };
 
 /**
@@ -247,14 +248,22 @@ void OLED_Init(void)
 	i2c_config.DutyCycle = I2C_DUTYCYCLE_2;
 	
 	/* Configure I2C GPIO pins: PB6=SCL, PB7=SDA */
-	i2c_gpio_init(OLED_I2C_PERIPHERAL, GPIOB, I2C1_SCL_PIN_PB6, I2C1_SDA_PIN_PB7);
-	i2c_init(OLED_I2C_PERIPHERAL, &i2c_config);
+	if (i2c_gpio_init(OLED_I2C_PERIPHERAL, GPIOB, I2C1_SCL_PIN_PB6,
+				  I2C1_SDA_PIN_PB7) != DRIVER_STATUS_OK)
+	{
+		return;
+	}
+	if (i2c_init(OLED_I2C_PERIPHERAL, &i2c_config) != DRIVER_STATUS_OK)
+	{
+		return;
+	}
 	
 	/* Initialize SSD1309 configuration */
 	oled_ssd1309.I2Cx = OLED_I2C_PERIPHERAL;
 	oled_ssd1309.DevAddress = OLED_I2C_ADDR;
 	oled_ssd1309.Contrast = 128;
 	oled_ssd1309.InvertDisplay = 0;
+	oled_ssd1309.I2CTimeoutCycles = I2C_DEFAULT_TIMEOUT_CYCLES;
 	
 #ifdef OLED_USE_RST_PIN
 	/* Initialize Reset GPIO pin */
@@ -275,7 +284,10 @@ void OLED_Init(void)
 
 
 	/* Use SSD1309 driver initialization - comprehensive init sequence */
-	ssd1309_init(&oled_ssd1309);
+	if (ssd1309_init(&oled_ssd1309) != DRIVER_STATUS_OK)
+	{
+		return;
+	}
 	OLED_Brightness(-1); /* Initialize brightness setting (-1 equals 0) */
 	OLED_Clear();
 	ssd1309_display_on_off(&oled_ssd1309, 1); /* Display ON using SSD1309 driver */

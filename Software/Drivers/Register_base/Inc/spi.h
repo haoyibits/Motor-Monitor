@@ -12,6 +12,9 @@
 #define SPI_H
 
 #include "stm32f407xx.h"
+#include "driver_status.h"
+
+#define SPI_DEFAULT_TIMEOUT_CYCLES 100000U
 
 /**
  * @name SPI Clock Phase and Polarity
@@ -81,30 +84,31 @@ typedef struct {
  * 
  * @note GPIO pins must be configured separately before calling this function
  */
-void spi_init(SPI_TypeDef *SPIx, SPI_Config_t *config);
+DriverStatus spi_init(SPI_TypeDef *SPIx, const SPI_Config_t *config);
 
 /**
  * @brief Enable SPI peripheral
  * 
  * @param SPIx Pointer to SPI peripheral
  */
-void spi_enable(SPI_TypeDef *SPIx);
+DriverStatus spi_enable(SPI_TypeDef *SPIx);
 
 /**
  * @brief Disable SPI peripheral
  * 
  * @param SPIx Pointer to SPI peripheral
  */
-void spi_disable(SPI_TypeDef *SPIx);
+DriverStatus spi_disable(SPI_TypeDef *SPIx);
 
 /**
  * @brief Transmit and receive a byte via SPI
  * 
  * @param SPIx Pointer to SPI peripheral
  * @param data Data byte to transmit
- * @return uint8_t Received data byte
+ * @return DriverStatus; received data is written through rx_data
  */
-uint8_t spi_transmit_receive(SPI_TypeDef *SPIx, uint8_t data);
+DriverStatus spi_transfer_byte(SPI_TypeDef *SPIx, uint8_t tx_data,
+                               uint8_t *rx_data, uint32_t timeout_cycles);
 
 /**
  * @brief Transmit data via SPI
@@ -113,7 +117,8 @@ uint8_t spi_transmit_receive(SPI_TypeDef *SPIx, uint8_t data);
  * @param pData Pointer to data buffer
  * @param size Number of bytes to transmit
  */
-void spi_transmit(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size);
+DriverStatus spi_transmit(SPI_TypeDef *SPIx, const uint8_t *data,
+                          uint16_t size, uint32_t timeout_cycles);
 
 /**
  * @brief Receive data via SPI
@@ -122,7 +127,8 @@ void spi_transmit(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size);
  * @param pData Pointer to data buffer
  * @param size Number of bytes to receive
  */
-void spi_receive(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size);
+DriverStatus spi_receive(SPI_TypeDef *SPIx, uint8_t *data,
+                         uint16_t size, uint32_t timeout_cycles);
 
 /**
  * @brief Transmit and receive data via SPI
@@ -132,7 +138,9 @@ void spi_receive(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size);
  * @param pRxData Pointer to receive data buffer
  * @param size Number of bytes to transfer
  */
-void spi_transmit_receive_buffer(SPI_TypeDef *SPIx, uint8_t *pTxData, uint8_t *pRxData, uint16_t size);
+DriverStatus spi_transfer(SPI_TypeDef *SPIx, const uint8_t *tx_data,
+                          uint8_t *rx_data, uint16_t size,
+                          uint32_t timeout_cycles);
 
 /**
  * @brief Check if SPI is busy

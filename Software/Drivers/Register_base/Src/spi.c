@@ -1,158 +1,156 @@
 /**
  * @file spi.c
- * @author Haoyi Chen
- * @date 2025-08-18
- * @brief STM32F4 SPI register-level driver implementation
- *
- * @details This file contains SPI function implementations for STM32F407
- * series microcontrollers using direct register manipulation.
+ * @brief STM32F4 SPI register-level driver implementation.
  */
 
-#include "bsp.h"
+#include <stddef.h>
 
-void spi_init(SPI_TypeDef *SPIx, SPI_Config_t *config)
+#include "spi.h"
+
+static DriverStatus spi_wait_flag(SPI_TypeDef *spi, uint32_t flag,
+                                  uint8_t expected_set, uint32_t timeout)
 {
-    // Disable SPI before configuration
-    SPIx->CR1 &= ~SPI_CR1_SPE;
-    
-    // Configure SPI control register 1 (CR1)
-    uint32_t cr1_config = 0;
-    
-    // Set clock phase
+    while (timeout > 0U) {
+        uint8_t is_set = ((spi->SR & flag) != 0U) ? 1U : 0U;
+        if (is_set == expected_set) {
+            return DRIVER_STATUS_OK;
+        }
+        --timeout;
+    }
+    return DRIVER_STATUS_TIMEOUT;
+}
+
+static DriverStatus spi_check_error(SPI_TypeDef *spi)
+{
+    if ((spi->SR & (SPI_SR_MODF | SPI_SR_CRCERR)) != 0U) {
+        return DRIVER_STATUS_IO_ERROR;
+    }
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus spi_init(SPI_TypeDef *spi, const SPI_Config_t *config)
+{
+    if ((spi == NULL) || (config == NULL) ||
+        (config->prescaler > SPI_PRESCALER_256) ||
+        (config->dataSize != SPI_DATASIZE_8BIT) ||
+        ((config->mode != SPI_MODE_MASTER) &&
+         (config->mode != SPI_MODE_SLAVE)) ||
+        ((config->clockPhase != SPI_CPHA_1EDGE) &&
+         (config->clockPhase != SPI_CPHA_2EDGE)) ||
+        ((config->clockPolarity != SPI_CPOL_LOW) &&
+         (config->clockPolarity != SPI_CPOL_HIGH)) ||
+        ((config->firstBit != SPI_FIRSTBIT_MSB) &&
+         (config->firstBit != SPI_FIRSTBIT_LSB))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    spi->CR1 &= ~SPI_CR1_SPE;
+
+    uint32_t cr1 = ((uint32_t)(config->prescaler & 0x7U) << SPI_CR1_BR_Pos);
     if (config->clockPhase == SPI_CPHA_2EDGE) {
-        cr1_config |= SPI_CR1_CPHA;
+        cr1 |= SPI_CR1_CPHA;
     }
-    
-    // Set clock polarity
     if (config->clockPolarity == SPI_CPOL_HIGH) {
-        cr1_config |= SPI_CR1_CPOL;
+        cr1 |= SPI_CR1_CPOL;
     }
-    
-    // Set master/slave mode
     if (config->mode == SPI_MODE_MASTER) {
-        cr1_config |= SPI_CR1_MSTR;
+        cr1 |= SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI;
     }
-    
-    // Set baud rate prescaler
-    cr1_config |= ((config->prescaler & 0x7) << 3);
-    
-    // Set frame format (MSB/LSB first)
     if (config->firstBit == SPI_FIRSTBIT_LSB) {
-        cr1_config |= SPI_CR1_LSBFIRST;
+        cr1 |= SPI_CR1_LSBFIRST;
     }
-    
-    // Set data frame format
-    if (config->dataSize == SPI_DATASIZE_16BIT) {
-        cr1_config |= SPI_CR1_DFF;
+
+    spi->CR1 = cr1;
+    spi->CR2 = 0U;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus spi_enable(SPI_TypeDef *spi)
+{
+    if (spi == NULL) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    // Software slave management enabled for master mode
-    if (config->mode == SPI_MODE_MASTER) {
-        cr1_config |= SPI_CR1_SSM | SPI_CR1_SSI;
+    spi->CR1 |= SPI_CR1_SPE;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus spi_disable(SPI_TypeDef *spi)
+{
+    if (spi == NULL) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    // Apply configuration
-    SPIx->CR1 = cr1_config;
+    spi->CR1 &= ~SPI_CR1_SPE;
+    return DRIVER_STATUS_OK;
 }
 
-void spi_enable(SPI_TypeDef *SPIx)
+DriverStatus spi_transfer_byte(SPI_TypeDef *spi, uint8_t tx_data,
+                               uint8_t *rx_data, uint32_t timeout_cycles)
 {
-    SPIx->CR1 |= SPI_CR1_SPE;
-}
-
-void spi_disable(SPI_TypeDef *SPIx)
-{
-    SPIx->CR1 &= ~SPI_CR1_SPE;
-}
-
-uint8_t spi_transmit_receive(SPI_TypeDef *SPIx, uint8_t data)
-{
-    volatile uint32_t timeout = 100000; // Timeout counter
-    
-    // Wait until TX buffer is empty
-    timeout = 100000;
-    while (!(SPIx->SR & SPI_SR_TXE) && timeout--);
-    if (timeout == 0) return 0xFF; // Timeout error
-    
-    // Send data
-    SPIx->DR = data;
-    
-    // Wait until RX buffer is not empty
-    timeout = 100000;
-    while (!(SPIx->SR & SPI_SR_RXNE) && timeout--);
-    if (timeout == 0) return 0xFF; // Timeout error
-    
-    // Return received data
-    return (uint8_t)SPIx->DR;
-}
-
-void spi_transmit(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size)
-{
-    uint16_t i;
-    
-    for (i = 0; i < size; i++) {
-        // Wait until TX buffer is empty
-        while (!(SPIx->SR & SPI_SR_TXE));
-        
-        // Send data
-        SPIx->DR = pData[i];
-        
-        // Wait until RX buffer is not empty (clear RX buffer)
-        while (!(SPIx->SR & SPI_SR_RXNE));
-        
-        // Read and discard received data
-        (void)SPIx->DR;
+    if ((spi == NULL) || (rx_data == NULL) || (timeout_cycles == 0U) ||
+        ((spi->CR1 & SPI_CR1_SPE) == 0U) || ((spi->CR1 & SPI_CR1_DFF) != 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    // Wait until SPI is not busy
-    while (SPIx->SR & SPI_SR_BSY);
-}
 
-void spi_receive(SPI_TypeDef *SPIx, uint8_t *pData, uint16_t size)
-{
-    uint16_t i;
-    
-    for (i = 0; i < size; i++) {
-        // Wait until TX buffer is empty
-        while (!(SPIx->SR & SPI_SR_TXE));
-        
-        // Send dummy byte to generate clock
-        SPIx->DR = 0xFF;
-        
-        // Wait until RX buffer is not empty
-        while (!(SPIx->SR & SPI_SR_RXNE));
-        
-        // Read received data
-        pData[i] = (uint8_t)SPIx->DR;
+    DriverStatus status = spi_wait_flag(spi, SPI_SR_TXE, 1U, timeout_cycles);
+    if (status != DRIVER_STATUS_OK) {
+        return status;
     }
-    
-    // Wait until SPI is not busy
-    while (SPIx->SR & SPI_SR_BSY);
-}
 
-void spi_transmit_receive_buffer(SPI_TypeDef *SPIx, uint8_t *pTxData, uint8_t *pRxData, uint16_t size)
-{
-    uint16_t i;
-    
-    for (i = 0; i < size; i++) {
-        // Wait until TX buffer is empty
-        while (!(SPIx->SR & SPI_SR_TXE));
-        
-        // Send data
-        SPIx->DR = pTxData[i];
-        
-        // Wait until RX buffer is not empty
-        while (!(SPIx->SR & SPI_SR_RXNE));
-        
-        // Read received data
-        pRxData[i] = (uint8_t)SPIx->DR;
+    *(__IO uint8_t *)&spi->DR = tx_data;
+
+    status = spi_wait_flag(spi, SPI_SR_RXNE, 1U, timeout_cycles);
+    if (status != DRIVER_STATUS_OK) {
+        return status;
     }
-    
-    // Wait until SPI is not busy
-    while (SPIx->SR & SPI_SR_BSY);
+
+    *rx_data = *(__IO uint8_t *)&spi->DR;
+    return spi_check_error(spi);
 }
 
-uint8_t spi_is_busy(SPI_TypeDef *SPIx)
+DriverStatus spi_transfer(SPI_TypeDef *spi, const uint8_t *tx_data,
+                          uint8_t *rx_data, uint16_t size,
+                          uint32_t timeout_cycles)
 {
-    return (SPIx->SR & SPI_SR_BSY) ? 1 : 0;
+    if ((spi == NULL) || (size == 0U) || (timeout_cycles == 0U) ||
+        ((tx_data == NULL) && (rx_data == NULL))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    for (uint16_t i = 0U; i < size; ++i) {
+        uint8_t received = 0U;
+        uint8_t outgoing = (tx_data != NULL) ? tx_data[i] : 0xFFU;
+        DriverStatus status = spi_transfer_byte(spi, outgoing, &received,
+                                                timeout_cycles);
+        if (status != DRIVER_STATUS_OK) {
+            return status;
+        }
+        if (rx_data != NULL) {
+            rx_data[i] = received;
+        }
+    }
+
+    return spi_wait_flag(spi, SPI_SR_BSY, 0U, timeout_cycles);
+}
+
+DriverStatus spi_transmit(SPI_TypeDef *spi, const uint8_t *data,
+                          uint16_t size, uint32_t timeout_cycles)
+{
+    if (data == NULL) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    return spi_transfer(spi, data, NULL, size, timeout_cycles);
+}
+
+DriverStatus spi_receive(SPI_TypeDef *spi, uint8_t *data,
+                         uint16_t size, uint32_t timeout_cycles)
+{
+    if (data == NULL) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    return spi_transfer(spi, NULL, data, size, timeout_cycles);
+}
+
+uint8_t spi_is_busy(SPI_TypeDef *spi)
+{
+    return ((spi != NULL) && ((spi->SR & SPI_SR_BSY) != 0U)) ? 1U : 0U;
 }

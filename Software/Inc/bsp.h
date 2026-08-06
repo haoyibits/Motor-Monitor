@@ -124,16 +124,16 @@
 
 /* Global shared variables for ADC data handling */
 extern volatile uint16_t current_adcBuffer[200];  // ADC sample buffer
-extern uint16_t current_adcAverage;               // Calculated average value
+extern volatile uint16_t current_adcAverage;      // Calculated average value
 extern volatile uint8_t current_adcAverageReady;  // Flag indicating new data is ready
-extern uint32_t sum;
+extern volatile uint8_t current_adcDmaError;
 
 /**
  * @brief Initialize RCC (Reset and Clock Control)
  * 
  * Configures system clock to maximum frequency using external oscillator
  */
-void rcc_init(void);
+DriverStatus rcc_init(void);
 
 /**
  * @brief Initialize GPIO pins

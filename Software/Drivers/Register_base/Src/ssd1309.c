@@ -8,7 +8,10 @@
  * built on top of the generic I2C driver.
  */
 
-#include "bsp.h"
+#include <stddef.h>
+
+#include "i2c.h"
+#include "ssd1309.h"
 
 
 /**
@@ -17,7 +20,10 @@
  * @param init SSD1309 initialization parameters
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_init(SSD1309_InitTypeDef *init) {
+DriverStatus ssd1309_init(SSD1309_InitTypeDef *init) {
+    if ((init == NULL) || (init->I2Cx == NULL)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
     /* Check if device is ready */
     if (ssd1309_is_ready(init, 3) != 0) {
         return 1; // Device not ready
@@ -92,12 +98,16 @@ uint8_t ssd1309_init(SSD1309_InitTypeDef *init) {
  * @param cmd Command to send
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_send_command(SSD1309_InitTypeDef *init, uint8_t cmd) {
+DriverStatus ssd1309_send_command(SSD1309_InitTypeDef *init, uint8_t cmd) {
+    if ((init == NULL) || (init->I2Cx == NULL)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
     uint8_t data[2];
     data[0] = 0x00; // Control byte: Co=0, D/C=0 (command)
     data[1] = cmd;
     
-    return i2c_write(init->I2Cx, init->DevAddress, data, 2);
+    return i2c_write(init->I2Cx, init->DevAddress, data, 2,
+                     init->I2CTimeoutCycles);
 }
 
 /**
@@ -108,21 +118,24 @@ uint8_t ssd1309_send_command(SSD1309_InitTypeDef *init, uint8_t cmd) {
  * @param size Data size
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_send_data(SSD1309_InitTypeDef *init, uint8_t* data, uint16_t size) {
+DriverStatus ssd1309_send_data(SSD1309_InitTypeDef *init,
+                               const uint8_t *data, uint16_t size) {
     /* Check parameters */
-    if (data == NULL || size == 0) {
-        return 1;
+    if ((init == NULL) || (init->I2Cx == NULL) || (data == NULL) ||
+        (size == 0U) || (size > SSD1309_WIDTH)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
     
     /* Prepare data with control byte */
-    uint8_t buffer[size + 1];
+    uint8_t buffer[SSD1309_WIDTH + 1U];
     buffer[0] = 0x40; // Control byte: Co=0, D/C=1 (data)
     
     for (uint16_t i = 0; i < size; i++) {
         buffer[i + 1] = data[i];
     }
     
-    return i2c_write(init->I2Cx, init->DevAddress, buffer, size + 1);
+    return i2c_write(init->I2Cx, init->DevAddress, buffer, size + 1U,
+                     init->I2CTimeoutCycles);
 }
 
 /**
@@ -131,7 +144,7 @@ uint8_t ssd1309_send_data(SSD1309_InitTypeDef *init, uint8_t* data, uint16_t siz
  * @param init SSD1309 configuration
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_clear_display(SSD1309_InitTypeDef *init) {
+DriverStatus ssd1309_clear_display(SSD1309_InitTypeDef *init) {
     /* Set column address range */
     if (ssd1309_send_command(init, SSD1309_COLUMNADDR) != 0) return 1;
     if (ssd1309_send_command(init, 0) != 0) return 1;     // Start column
@@ -165,7 +178,7 @@ uint8_t ssd1309_clear_display(SSD1309_InitTypeDef *init) {
  * @param contrast Contrast value (0-255)
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_set_contrast(SSD1309_InitTypeDef *init, uint8_t contrast) {
+DriverStatus ssd1309_set_contrast(SSD1309_InitTypeDef *init, uint8_t contrast) {
     if (ssd1309_send_command(init, SSD1309_SETCONTRAST) != 0) return 1;
     if (ssd1309_send_command(init, contrast) != 0) return 1;
     
@@ -182,7 +195,7 @@ uint8_t ssd1309_set_contrast(SSD1309_InitTypeDef *init, uint8_t contrast) {
  * @param state Display state (0=off, 1=on)
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_display_on_off(SSD1309_InitTypeDef *init, uint8_t state) {
+DriverStatus ssd1309_display_on_off(SSD1309_InitTypeDef *init, uint8_t state) {
     if (state) {
         return ssd1309_send_command(init, SSD1309_DISPLAYON);
     } else {
@@ -197,8 +210,8 @@ uint8_t ssd1309_display_on_off(SSD1309_InitTypeDef *init, uint8_t state) {
  * @param invert Invert state (0=normal, 1=inverted)
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_invert_display(SSD1309_InitTypeDef *init, uint8_t invert) {
-    uint8_t result;
+DriverStatus ssd1309_invert_display(SSD1309_InitTypeDef *init, uint8_t invert) {
+    DriverStatus result;
     
     if (invert) {
         result = ssd1309_send_command(init, SSD1309_INVERTDISPLAY);
@@ -222,7 +235,7 @@ uint8_t ssd1309_invert_display(SSD1309_InitTypeDef *init, uint8_t invert) {
  * @param page Page position (0-7)
  * @return uint8_t 0=success, 1=failure
  */
-uint8_t ssd1309_set_cursor(SSD1309_InitTypeDef *init, uint8_t column, uint8_t page) {
+DriverStatus ssd1309_set_cursor(SSD1309_InitTypeDef *init, uint8_t column, uint8_t page) {
     /* Check bounds */
     if (column >= SSD1309_WIDTH || page >= SSD1309_PAGES) {
         return 1;
@@ -248,6 +261,10 @@ uint8_t ssd1309_set_cursor(SSD1309_InitTypeDef *init, uint8_t column, uint8_t pa
  * @param trials Number of attempts
  * @return uint8_t 0=ready, 1=not ready
  */
-uint8_t ssd1309_is_ready(SSD1309_InitTypeDef *init, uint8_t trials) {
-    return i2c_is_ready(init->I2Cx, init->DevAddress, trials);
+DriverStatus ssd1309_is_ready(SSD1309_InitTypeDef *init, uint8_t trials) {
+    if ((init == NULL) || (init->I2Cx == NULL)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    return i2c_is_ready(init->I2Cx, init->DevAddress, trials,
+                        init->I2CTimeoutCycles);
 }

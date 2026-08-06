@@ -15,6 +15,7 @@
 #include "uart.h"
 #include "systick.h"
 #include "SEGGER_RTT.h"
+#include <string.h>
 /* External motor encoder handle - defined in event.c */
 extern Encoder_HandleTypeDef motor_encoder;
 
@@ -50,8 +51,10 @@ static UART_HandleTypeDef huart_fpga;
 W25Q128_Config_t flash_config = {
     .spi = SPI1,
     .cs_port = W25Q128_CS_PORT,
-    .cs_pin = W25Q128_CS_PIN
+    .cs_pin = W25Q128_CS_PIN,
+    .spi_timeout_cycles = SPI_DEFAULT_TIMEOUT_CYCLES
 };
+static uint8_t flash_available = 0U;
 
 /**
  * @brief Default motor configuration values
@@ -78,14 +81,14 @@ static const Motor_Config_t default_motor_config = {
  * 
  * @details Configures UART2 for FPGA communication at 115200 baud
  */
-static void motor_uart_init(void)
+static DriverStatus motor_uart_init(void)
 {
     /* Configure UART pins for FPGA communication */
     UART_PinConfig uart_pins = {
-        .tx_port = GPIOD,
-        .tx_pin = 5,                    // PD5 - UART2_TX
-        .rx_port = GPIOD,
-        .rx_pin = 6,                    // PD6 - UART2_RX
+        .tx_port = FPGA_UART_TX_PORT,
+        .tx_pin = FPGA_UART_TX_PIN,
+        .rx_port = FPGA_UART_RX_PORT,
+        .rx_pin = FPGA_UART_RX_PIN,
         .alt_func = 7                   // AF7 for UART2
     };
     
@@ -99,7 +102,7 @@ static void motor_uart_init(void)
     huart_fpga.Init.HardwareFlowControl = UART_HWCONTROL_NONE; // No flow control
     
     /* Initialize UART */
-    uart_init(&huart_fpga, &uart_pins);
+    return uart_init(&huart_fpga, &uart_pins);
 }
 
 /**
@@ -237,8 +240,15 @@ uint8_t motor_config_load_from_flash(void)
                      MOTOR_CONFIG_FLASH_ADDRESS, sizeof(Motor_Config_t));
     
     /* Read configuration from flash */
-    w25q128_read_data(&flash_config, MOTOR_CONFIG_FLASH_ADDRESS, 
-                      (uint8_t *)&temp_config, sizeof(Motor_Config_t));
+    DriverStatus flash_status = w25q128_read_data(
+        &flash_config, MOTOR_CONFIG_FLASH_ADDRESS,
+        (uint8_t *)&temp_config, sizeof(Motor_Config_t));
+    if (flash_status != DRIVER_STATUS_OK) {
+        SEGGER_RTT_printf(0, "  Flash read failed, status=%d\r\n", flash_status);
+        motor_config = default_motor_config;
+        motor_config.checksum = motor_config_calculate_checksum(&motor_config);
+        return 0;
+    }
     
     SEGGER_RTT_printf(0, "  Raw data read - Magic: 0x%08X, Checksum: 0x%04X\r\n",
                      temp_config.magic_number, temp_config.checksum);
@@ -297,6 +307,11 @@ uint8_t motor_config_load_from_flash(void)
  */
 uint8_t motor_config_save_to_flash(void)
 {
+    if (flash_available == 0U) {
+        SEGGER_RTT_printf(0, "Flash unavailable; configuration was not saved\r\n");
+        return 0;
+    }
+
     const char* source_str = (motor_config.output_source == 0) ? "Disabled" :
                             (motor_config.output_source == 1) ? "STM32" : "FPGA";
     const char* control_mode_str = (motor_config.motor_control_mode == 0) ? "PWM" : "PID";
@@ -320,32 +335,42 @@ uint8_t motor_config_save_to_flash(void)
     
     /* Erase sector before writing */
     SEGGER_RTT_printf(0, "  Erasing flash sector at 0x%08X...\r\n", MOTOR_CONFIG_FLASH_ADDRESS);
-    w25q128_sector_erase(&flash_config, MOTOR_CONFIG_FLASH_ADDRESS);
-    
-    /* Wait for erase to complete */
-    w25q128_wait_for_write_complete(&flash_config);
+    DriverStatus flash_status = w25q128_sector_erase(
+        &flash_config, MOTOR_CONFIG_FLASH_ADDRESS);
+    if (flash_status != DRIVER_STATUS_OK) {
+        SEGGER_RTT_printf(0, "  Sector erase failed, status=%d\r\n", flash_status);
+        return 0;
+    }
     SEGGER_RTT_printf(0, "  Sector erase completed\r\n");
     
     /* Write configuration to flash */
     SEGGER_RTT_printf(0, "  Writing %d bytes to flash...\r\n", sizeof(Motor_Config_t));
-    w25q128_page_program(&flash_config, MOTOR_CONFIG_FLASH_ADDRESS,
-                         (uint8_t *)&motor_config, sizeof(Motor_Config_t));
-    
-    /* Wait for write to complete */
-    w25q128_wait_for_write_complete(&flash_config);
+    flash_status = w25q128_page_program(
+        &flash_config, MOTOR_CONFIG_FLASH_ADDRESS,
+        (const uint8_t *)&motor_config, sizeof(Motor_Config_t));
+    if (flash_status != DRIVER_STATUS_OK) {
+        SEGGER_RTT_printf(0, "  Flash write failed, status=%d\r\n", flash_status);
+        return 0;
+    }
     SEGGER_RTT_printf(0, "  Flash write completed\r\n");
     
     /* Verify the write by reading back */
     Motor_Config_t verify_config;
-    w25q128_read_data(&flash_config, MOTOR_CONFIG_FLASH_ADDRESS, 
-                      (uint8_t *)&verify_config, sizeof(Motor_Config_t));
+    flash_status = w25q128_read_data(
+        &flash_config, MOTOR_CONFIG_FLASH_ADDRESS,
+        (uint8_t *)&verify_config, sizeof(Motor_Config_t));
+    if (flash_status != DRIVER_STATUS_OK) {
+        SEGGER_RTT_printf(0, "  Verification read failed, status=%d\r\n",
+                         flash_status);
+        return 0;
+    }
     
-    if (verify_config.magic_number == motor_config.magic_number &&
-        verify_config.checksum == motor_config.checksum) {
+    if (memcmp(&verify_config, &motor_config, sizeof(Motor_Config_t)) == 0) {
         SEGGER_RTT_printf(0, "  Flash write verification: PASS\r\n");
     } else {
         SEGGER_RTT_printf(0, "  Flash write verification: FAIL (Magic: 0x%08X, Checksum: 0x%04X)\r\n",
                          verify_config.magic_number, verify_config.checksum);
+        return 0;
     }
     
     SEGGER_RTT_printf(0, "=== Motor config flash save completed ===\r\n");
@@ -363,22 +388,34 @@ void motor_config_init(void)
     uint8_t manufacturer_id;
     uint16_t device_id;
     
+    flash_available = 0U;
+
     /* Initialize UART for FPGA communication */
-    motor_uart_init();
+    (void)motor_uart_init();
     
     /* Initialize motor protection system */
     motor_protection_init();
     
     /* Initialize W25Q128 Flash */
     SEGGER_RTT_printf(0, "Initializing W25Q128 Flash...\r\n");
-    w25q128_init(&flash_config);
+    DriverStatus flash_status = w25q128_init(&flash_config);
+    if (flash_status != DRIVER_STATUS_OK) {
+        SEGGER_RTT_printf(0, "Flash initialization failed, status=%d\r\n",
+                         flash_status);
+        motor_config = default_motor_config;
+        motor_config.checksum = motor_config_calculate_checksum(&motor_config);
+        return;
+    }
     SEGGER_RTT_printf(0, "Flash init completed, reading JEDEC ID...\r\n");
     
     /* Verify flash connection */
-    if (w25q128_read_jedec_id(&flash_config, &manufacturer_id, &device_id)) {
+    flash_status = w25q128_read_jedec_id(&flash_config, &manufacturer_id,
+                                         &device_id);
+    if (flash_status == DRIVER_STATUS_OK) {
         if (manufacturer_id == W25Q128_JEDEC_MANUFACTURER_ID && 
             device_id == W25Q128_JEDEC_DEVICE_ID) {
             SEGGER_RTT_printf(0, "W25Q128 Flash detected successfully\r\n");
+            flash_available = 1U;
             
             /* Load motor configuration from flash */
             motor_config_load_from_flash();
@@ -449,8 +486,9 @@ void motor_init(void)
     };
     
     // Initialize and start encoder counting 
-    encoder_init(&motor_encoder, &encoder_config);        // Configure TIMx in encoder mode
-    encoder_start(&motor_encoder);                        // Start counting encoder pulses
+    if (encoder_init(&motor_encoder, &encoder_config) == DRIVER_STATUS_OK) {
+        encoder_start(&motor_encoder);                    // Start counting encoder pulses
+    }
 }
 
 /**
@@ -575,7 +613,8 @@ void motor_send_fpga_command(float frequency, float duty_cycle)
     }
     
     /* Send packet via UART */
-    uart_transmit(&huart_fpga, (uint8_t *)&packet, sizeof(FPGA_Command_Packet_t), 1000);
+    (void)uart_transmit(&huart_fpga, (const uint8_t *)&packet,
+                        sizeof(FPGA_Command_Packet_t), 1000U);
     
     SEGGER_RTT_printf(0, "FPGA command sent: freq=%.1fHz, duty=%.1f\r\n",
                      packet.pwm_frequency, packet.pwm_duty_cycle);
@@ -612,7 +651,7 @@ void motor_protection_update(void)
     }
     
     /* Check for current overcurrent condition using appropriate threshold */
-    extern uint16_t current_adcAverage;
+    extern volatile uint16_t current_adcAverage;
     uint16_t current_threshold = (motor_monitor.state == MOTOR_STATE_STARTING) ? 
                                 CURRENT_STARTUP_THRESHOLD : CURRENT_RUNNING_THRESHOLD;
     

@@ -13,6 +13,7 @@
 #define ADC_H
 
 #include "stm32f407xx.h"
+#include "driver_status.h"
 
 /**
  * @brief ADC initialization configuration structure
@@ -41,9 +42,9 @@ typedef struct {
  * @{
  */
 #define ADC_RESOLUTION_12BIT    0x00000000U /**< 12-bit resolution */
-#define ADC_RESOLUTION_10BIT    0x00000100U /**< 10-bit resolution */
-#define ADC_RESOLUTION_8BIT     0x00000200U /**< 8-bit resolution */
-#define ADC_RESOLUTION_6BIT     0x00000300U /**< 6-bit resolution */
+#define ADC_RESOLUTION_10BIT    ADC_CR1_RES_0 /**< 10-bit resolution */
+#define ADC_RESOLUTION_8BIT     ADC_CR1_RES_1 /**< 8-bit resolution */
+#define ADC_RESOLUTION_6BIT     ADC_CR1_RES /**< 6-bit resolution */
 /** @} */
 
 /**
@@ -59,7 +60,7 @@ typedef struct {
  * @{
  */
 #define ADC_SCAN_DISABLE        0x00000000U /**< Scan mode disabled */
-#define ADC_SCAN_ENABLE         0x00000100U /**< Scan mode enabled */
+#define ADC_SCAN_ENABLE         ADC_CR1_SCAN /**< Scan mode enabled */
 /** @} */
 
 /**
@@ -67,7 +68,7 @@ typedef struct {
  * @{
  */
 #define ADC_CONTINUOUS_DISABLE  0x00000000U /**< Single conversion mode */
-#define ADC_CONTINUOUS_ENABLE   0x00002000U /**< Continuous conversion mode */
+#define ADC_CONTINUOUS_ENABLE   ADC_CR2_CONT /**< Continuous conversion mode */
 /** @} */
 
 /**
@@ -75,21 +76,21 @@ typedef struct {
  * @{
  */
 #define ADC_EXTERNALTRIG_T1_CC1   0x00000000U /**< Timer 1 CC1 event  (EXTSEL=0000) */
-#define ADC_EXTERNALTRIG_T1_CC2   0x00010000U /**< Timer 1 CC2 event  (EXTSEL=0001) */
-#define ADC_EXTERNALTRIG_T1_CC3   0x00020000U /**< Timer 1 CC3 event  (EXTSEL=0010) */
-#define ADC_EXTERNALTRIG_T2_CC2   0x00030000U /**< Timer 2 CC2 event  (EXTSEL=0011) */
-#define ADC_EXTERNALTRIG_T2_CC3   0x00040000U /**< Timer 2 CC3 event  (EXTSEL=0100) */
-#define ADC_EXTERNALTRIG_T2_CC4   0x00050000U /**< Timer 2 CC4 event  (EXTSEL=0101) */
-#define ADC_EXTERNALTRIG_T2_TRGO  0x00060000U /**< Timer 2 TRGO event (EXTSEL=0110) */
-#define ADC_EXTERNALTRIG_T3_CC1   0x00070000U /**< Timer 3 CC1 event  (EXTSEL=0111) */
-#define ADC_EXTERNALTRIG_T3_TRGO  0x00080000U /**< Timer 3 TRGO event (EXTSEL=1000) */
-#define ADC_EXTERNALTRIG_T4_CC4   0x00090000U /**< Timer 4 CC4 event  (EXTSEL=1001) */
-#define ADC_EXTERNALTRIG_T5_CC1   0x000A0000U /**< Timer 5 CC1 event  (EXTSEL=1010) */
-#define ADC_EXTERNALTRIG_T5_CC2   0x000B0000U /**< Timer  5 CC2 event (EXTSEL=1011) */
-#define ADC_EXTERNALTRIG_T5_CC3   0x000C0000U /**< Timer 5 CC3 event  (EXTSEL=1100) */
-#define ADC_EXTERNALTRIG_T8_CC1   0x000D0000U /**< Timer 8 CC1 event  (EXTSEL=1101) */
-#define ADC_EXTERNALTRIG_T8_TRGO  0x000E0000U /**< Timer 8 TRGO event (EXTSEL=1110) */
-#define ADC_EXTERNALTRIG_EXTI_11  0x000F0000U /**< EXTI line 11        (EXTSEL=1111) */
+#define ADC_EXTERNALTRIG_T1_CC2   (1UL << ADC_CR2_EXTSEL_Pos) /**< Timer 1 CC2 event */
+#define ADC_EXTERNALTRIG_T1_CC3   (2UL << ADC_CR2_EXTSEL_Pos) /**< Timer 1 CC3 event */
+#define ADC_EXTERNALTRIG_T2_CC2   (3UL << ADC_CR2_EXTSEL_Pos) /**< Timer 2 CC2 event */
+#define ADC_EXTERNALTRIG_T2_CC3   (4UL << ADC_CR2_EXTSEL_Pos) /**< Timer 2 CC3 event */
+#define ADC_EXTERNALTRIG_T2_CC4   (5UL << ADC_CR2_EXTSEL_Pos) /**< Timer 2 CC4 event */
+#define ADC_EXTERNALTRIG_T2_TRGO  (6UL << ADC_CR2_EXTSEL_Pos) /**< Timer 2 TRGO event */
+#define ADC_EXTERNALTRIG_T3_CC1   (7UL << ADC_CR2_EXTSEL_Pos) /**< Timer 3 CC1 event */
+#define ADC_EXTERNALTRIG_T3_TRGO  (8UL << ADC_CR2_EXTSEL_Pos) /**< Timer 3 TRGO event */
+#define ADC_EXTERNALTRIG_T4_CC4   (9UL << ADC_CR2_EXTSEL_Pos) /**< Timer 4 CC4 event */
+#define ADC_EXTERNALTRIG_T5_CC1   (10UL << ADC_CR2_EXTSEL_Pos) /**< Timer 5 CC1 event */
+#define ADC_EXTERNALTRIG_T5_CC2   (11UL << ADC_CR2_EXTSEL_Pos) /**< Timer 5 CC2 event */
+#define ADC_EXTERNALTRIG_T5_CC3   (12UL << ADC_CR2_EXTSEL_Pos) /**< Timer 5 CC3 event */
+#define ADC_EXTERNALTRIG_T8_CC1   (13UL << ADC_CR2_EXTSEL_Pos) /**< Timer 8 CC1 event */
+#define ADC_EXTERNALTRIG_T8_TRGO  (14UL << ADC_CR2_EXTSEL_Pos) /**< Timer 8 TRGO event */
+#define ADC_EXTERNALTRIG_EXTI_11  ADC_CR2_EXTSEL /**< EXTI line 11 */
 /** @} */
 
 /**
@@ -107,8 +108,8 @@ typedef struct {
  * @{
  */
 #define ADC_DMA_DISABLE       0x00000000U /**< DMA disabled */
-#define ADC_DMA_SINGLE        0x00000100U /**< DMA single mode */
-#define ADC_DMA_CIRCULAR      0x00000500U /**< DMA circular mode */
+#define ADC_DMA_SINGLE        ADC_CR2_DMA /**< DMA single mode */
+#define ADC_DMA_CIRCULAR      (ADC_CR2_DMA | ADC_CR2_DDS) /**< DMA circular mode */
 /** @} */
 
 /**
@@ -180,7 +181,7 @@ typedef struct {
  * 
  * @note ADC clock must be enabled separately via RCC registers before calling this function
  */
-void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init);
+DriverStatus adc_init(ADC_TypeDef *ADCx, const ADC_InitTypeDef *init);
 
 /**
  * @brief Configure an ADC channel
@@ -190,7 +191,8 @@ void adc_init(ADC_TypeDef *ADCx, ADC_InitTypeDef *init);
  * 
  * @note Proper GPIO initialization and alternate function configuration must be done separately
  */
-void adc_config_channel(ADC_TypeDef *ADCx, ADC_ChannelConfTypeDef *config);
+DriverStatus adc_config_channel(ADC_TypeDef *ADCx,
+                                const ADC_ChannelConfTypeDef *config);
 
 /**
  * @brief Enable the ADC

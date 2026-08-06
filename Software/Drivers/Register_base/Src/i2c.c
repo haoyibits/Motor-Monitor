@@ -1,321 +1,384 @@
 /**
  * @file i2c.c
- * @author Haoyi Chen
- * @date 2025-08-18
- * @brief Implementation of generic I2C driver for STM32F407VGT6
- *
- * @details This file contains the implementation of register-based I2C functions
- * providing a generic interface for all I2C devices.
+ * @brief STM32F4 register-level I2C master driver implementation.
  */
 
-#include "bsp.h"
+#include <stddef.h>
 
-/**
- * @brief Wait for I2C event
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param event Event flag to wait for
- * @return uint8_t 0=success, 1=failure (timeout)
- */
-static uint8_t i2c_wait_event(I2C_TypeDef *I2Cx, uint32_t event) {
-    uint32_t timeout = 10000;
-    
-    while (timeout--) {
-        if (event < 0x10000) {
-            /* Event in SR1 */
-            if ((I2Cx->SR1 & event) == event) {
-                return 0;
-            }
-        }
-        else {
-            /* Event in SR2 */
-            if ((I2Cx->SR2 & (event & 0xFFFF)) == (event & 0xFFFF)) {
-                return 0;
-            }
-        }
-    }
-    
-    return 1; // Timeout
-}
+#include "gpio.h"
+#include "i2c.h"
+#include "rcc.h"
 
-/**
- * @brief Initialize I2C peripheral
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param init I2C initialization parameters
- */
-void i2c_init(I2C_TypeDef *I2Cx, I2C_InitTypeDef *init) {
-    uint32_t pclk1 = 42000000; // 42 MHz (modify according to actual project)
-    uint32_t freqrange = (uint32_t)(pclk1 / 1000000); // MHz
-    
-    /* Disable I2C */
-    I2Cx->CR1 &= ~I2C_CR1_PE;
-    
-    /* Set I2C clock */
-    I2Cx->CR2 = freqrange;
-    
-    /* Set I2C timing parameters */
-    I2Cx->CCR = 0;
-    
-    if (init->ClockSpeed <= 100000) {
-        /* Standard mode (100 KHz) */
-        I2Cx->CCR = (uint16_t)(pclk1 / (init->ClockSpeed * 2));
-        I2Cx->TRISE = freqrange + 1;
-    }
-    else {
-        /* Fast mode (400 KHz) */
-        I2Cx->CCR = I2C_CCR_FS | init->DutyCycle;
-        
-        if (init->DutyCycle == I2C_DUTYCYCLE_2) {
-            I2Cx->CCR |= (uint16_t)(pclk1 / (init->ClockSpeed * 3));
-        }
-        else { // I2C_DUTYCYCLE_16_9
-            I2Cx->CCR |= (uint16_t)(pclk1 / (init->ClockSpeed * 25));
-        }
-        
-        I2Cx->TRISE = (uint16_t)((freqrange * 300) / 1000) + 1;
-    }
-    
-    /* Set own address (not important, as we are the master) */
-    I2Cx->OAR1 = 0x4000; // Add reserved bit
-    
-    /* Enable I2C */
-    I2Cx->CR1 |= I2C_CR1_PE;
-}
+#define I2C_ERROR_FLAGS (I2C_SR1_BERR | I2C_SR1_ARLO | I2C_SR1_AF | \
+                         I2C_SR1_OVR | I2C_SR1_PECERR | I2C_SR1_TIMEOUT | \
+                         I2C_SR1_SMBALERT)
 
-/**
- * @brief Initialize I2C GPIO pins
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param GPIOx GPIO port (GPIOA, GPIOB, etc.)
- * @param SCL_Pin SCL pin number (0-15)
- * @param SDA_Pin SDA pin number (0-15)
- */
-void i2c_gpio_init(I2C_TypeDef *I2Cx, GPIO_TypeDef *GPIOx, uint8_t SCL_Pin, uint8_t SDA_Pin) {
+typedef struct {
+    GPIO_TypeDef *gpio;
+    uint8_t scl_pin;
+    uint8_t sda_pin;
     uint8_t alternate_function;
-    
-    /* Determine alternate function number */
-    if (I2Cx == I2C1 || I2Cx == I2C2) {
-        alternate_function = 4; // AF4 for I2C1 and I2C2
+    I2C_InitTypeDef init;
+    uint8_t pins_configured;
+    uint8_t peripheral_configured;
+} I2C_Context;
+
+static I2C_Context i2c_contexts[3];
+
+static int8_t i2c_instance_index(I2C_TypeDef *i2c)
+{
+    if (i2c == I2C1) return 0;
+    if (i2c == I2C2) return 1;
+    if (i2c == I2C3) return 2;
+    return -1;
+}
+
+static uint8_t i2c_instance_valid(I2C_TypeDef *i2c)
+{
+    return (i2c_instance_index(i2c) >= 0) ? 1U : 0U;
+}
+
+static void i2c_recovery_delay(void)
+{
+    for (volatile uint32_t delay = 512U; delay > 0U; --delay) {
+        __NOP();
+    }
+}
+
+static void i2c_clear_addr(I2C_TypeDef *i2c)
+{
+    volatile uint32_t clear = i2c->SR1;
+    clear = i2c->SR2;
+    (void)clear;
+}
+
+static void i2c_clear_errors(I2C_TypeDef *i2c)
+{
+    i2c->SR1 &= ~I2C_ERROR_FLAGS;
+}
+
+static void i2c_abort(I2C_TypeDef *i2c)
+{
+    if ((i2c->SR2 & I2C_SR2_MSL) != 0U) {
+        i2c->CR1 |= I2C_CR1_STOP;
+    }
+    i2c->CR1 &= ~I2C_CR1_POS;
+    i2c->CR1 |= I2C_CR1_ACK;
+    i2c_clear_errors(i2c);
+}
+
+static DriverStatus i2c_wait_sr1(I2C_TypeDef *i2c, uint32_t flags,
+                                 uint32_t timeout)
+{
+    while (timeout > 0U) {
+        uint32_t sr1 = i2c->SR1;
+        if ((sr1 & I2C_ERROR_FLAGS) != 0U) {
+            return DRIVER_STATUS_IO_ERROR;
+        }
+        if ((sr1 & flags) == flags) {
+            return DRIVER_STATUS_OK;
+        }
+        --timeout;
+    }
+    return DRIVER_STATUS_TIMEOUT;
+}
+
+static DriverStatus i2c_wait_bus_idle(I2C_TypeDef *i2c, uint32_t timeout)
+{
+    while (timeout > 0U) {
+        if ((i2c->SR2 & I2C_SR2_BUSY) == 0U) {
+            return DRIVER_STATUS_OK;
+        }
+        --timeout;
+    }
+    return DRIVER_STATUS_BUSY;
+}
+
+static DriverStatus i2c_start_and_address(I2C_TypeDef *i2c,
+                                          uint8_t device_address,
+                                          uint8_t read,
+                                          uint32_t timeout)
+{
+    i2c_clear_errors(i2c);
+    i2c->CR1 |= I2C_CR1_START;
+    DriverStatus status = i2c_wait_sr1(i2c, I2C_SR1_SB, timeout);
+    if (status != DRIVER_STATUS_OK) {
+        return status;
+    }
+
+    i2c->DR = ((uint32_t)device_address << 1) | (read ? 1U : 0U);
+    return i2c_wait_sr1(i2c, I2C_SR1_ADDR, timeout);
+}
+
+DriverStatus i2c_init(I2C_TypeDef *i2c, const I2C_InitTypeDef *init)
+{
+    if ((!i2c_instance_valid(i2c)) || (init == NULL) ||
+        (init->ClockSpeed == 0U) ||
+        (init->ClockSpeed > I2C_CLOCKSPEED_400KHZ)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    uint32_t pclk1 = rcc_get_pclk1_freq();
+    uint32_t freq_mhz = pclk1 / 1000000U;
+    if ((freq_mhz < 2U) || (freq_mhz > 50U)) {
+        return DRIVER_STATUS_OUT_OF_RANGE;
+    }
+
+    i2c->CR1 &= ~I2C_CR1_PE;
+    i2c->CR1 = I2C_CR1_SWRST;
+    i2c->CR1 = 0U;
+    i2c->CR2 = freq_mhz & I2C_CR2_FREQ;
+    i2c->CCR = 0U;
+
+    if (init->ClockSpeed <= I2C_CLOCKSPEED_100KHZ) {
+        uint32_t ccr = pclk1 / (init->ClockSpeed * 2U);
+        if (ccr < 4U) {
+            ccr = 4U;
+        }
+        i2c->CCR = ccr;
+        i2c->TRISE = freq_mhz + 1U;
     } else {
-        alternate_function = 9; // AF9 for I2C3
+        uint32_t divisor = (init->DutyCycle == I2C_DUTYCYCLE_16_9) ? 25U : 3U;
+        uint32_t ccr = pclk1 / (init->ClockSpeed * divisor);
+        if (ccr == 0U) {
+            ccr = 1U;
+        }
+        i2c->CCR = I2C_CCR_FS | init->DutyCycle | ccr;
+        i2c->TRISE = ((freq_mhz * 300U) / 1000U) + 1U;
     }
-    
-    /* Configure SCL and SDA as alternate function open-drain output with pull-up */
-    gpio_init(GPIOx, SCL_Pin, 0x02, 0x01, 0x03, 0x01); // Alternate function, open-drain, high-speed, pull-up
-    gpio_set_af(GPIOx, SCL_Pin, alternate_function);
-    
-    gpio_init(GPIOx, SDA_Pin, 0x02, 0x01, 0x03, 0x01); // Alternate function, open-drain, high-speed, pull-up
-    gpio_set_af(GPIOx, SDA_Pin, alternate_function);
+
+    i2c->OAR1 = (1U << 14);
+    i2c->CR1 = I2C_CR1_PE | I2C_CR1_ACK;
+
+    I2C_Context *context = &i2c_contexts[i2c_instance_index(i2c)];
+    context->init = *init;
+    context->peripheral_configured = 1U;
+    return DRIVER_STATUS_OK;
 }
 
-/**
- * @brief Write data to I2C device
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param DevAddress Device I2C address
- * @param data Data buffer pointer
- * @param size Data size
- * @return uint8_t 0=success, 1=failure
- */
-uint8_t i2c_write(I2C_TypeDef *I2Cx, uint8_t DevAddress, uint8_t* data, uint16_t size) {
-    /* Check parameters */
-    if (size == 0 || data == NULL) {
-        return 1;
+DriverStatus i2c_gpio_init(I2C_TypeDef *i2c, GPIO_TypeDef *gpio,
+                           uint8_t scl_pin, uint8_t sda_pin)
+{
+    if ((!i2c_instance_valid(i2c)) || (gpio == NULL) ||
+        (scl_pin >= 16U) || (sda_pin >= 16U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Wait for I2C bus to be idle */
-    if (i2c_wait_event(I2Cx, 0x20000) != 0) {
-        return 1; // Bus busy
-    }
-    
-    /* Generate start condition */
-    I2Cx->CR1 |= I2C_CR1_START;
-    
-    /* Wait for start condition to be generated */
-    if (i2c_wait_event(I2Cx, I2C_SR1_SB) != 0) {
-        return 1;
-    }
-    
-    /* Send device address (write mode) */
-    I2Cx->DR = DevAddress << 1;
-    
-    /* Wait for address to be sent */
-    if (i2c_wait_event(I2Cx, I2C_SR1_ADDR) != 0) {
-        I2Cx->CR1 |= I2C_CR1_STOP;
-        return 1;
-    }
-    
-    /* Clear ADDR flag */
-    uint32_t tmp = I2Cx->SR1;
-    tmp = I2Cx->SR2;
-    (void)tmp;
-    
-    /* Send data */
-    for (uint16_t i = 0; i < size; i++) {
-        I2Cx->DR = data[i];
-        
-        /* Wait for data to be sent */
-        if (i < size - 1) {
-            if (i2c_wait_event(I2Cx, I2C_SR1_TXE) != 0) {
-                I2Cx->CR1 |= I2C_CR1_STOP;
-                return 1;
-            }
-        } else {
-            if (i2c_wait_event(I2Cx, I2C_SR1_BTF) != 0) {
-                I2Cx->CR1 |= I2C_CR1_STOP;
-                return 1;
-            }
-        }
-    }
-    
-    /* Generate stop condition */
-    I2Cx->CR1 |= I2C_CR1_STOP;
-    
-    return 0; // Success
+
+    uint8_t alternate_function = (i2c == I2C3) ? 9U : 4U;
+    gpio_init(gpio, scl_pin, GPIO_MODE_AF, GPIO_OTYPE_OD,
+              GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_set_af(gpio, scl_pin, alternate_function);
+    gpio_init(gpio, sda_pin, GPIO_MODE_AF, GPIO_OTYPE_OD,
+              GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_set_af(gpio, sda_pin, alternate_function);
+
+    I2C_Context *context = &i2c_contexts[i2c_instance_index(i2c)];
+    context->gpio = gpio;
+    context->scl_pin = scl_pin;
+    context->sda_pin = sda_pin;
+    context->alternate_function = alternate_function;
+    context->pins_configured = 1U;
+    return DRIVER_STATUS_OK;
 }
 
-/**
- * @brief Read data from I2C device
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param DevAddress Device I2C address
- * @param data Data buffer pointer
- * @param size Data size
- * @return uint8_t 0=success, 1=failure
- */
-uint8_t i2c_read(I2C_TypeDef *I2Cx, uint8_t DevAddress, uint8_t* data, uint16_t size) {
-    /* Check parameters */
-    if (size == 0 || data == NULL) {
-        return 1;
+DriverStatus i2c_recover_bus(I2C_TypeDef *i2c)
+{
+    int8_t index = i2c_instance_index(i2c);
+    if (index < 0) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Wait for I2C bus to be idle */
-    if (i2c_wait_event(I2Cx, 0x20000) != 0) {
-        return 1; // Bus busy
+    I2C_Context *context = &i2c_contexts[index];
+    if ((context->pins_configured == 0U) ||
+        (context->peripheral_configured == 0U)) {
+        return DRIVER_STATUS_NOT_READY;
     }
-    
-    /* Generate start condition */
-    I2Cx->CR1 |= I2C_CR1_START;
-    
-    /* Wait for start condition to be generated */
-    if (i2c_wait_event(I2Cx, I2C_SR1_SB) != 0) {
-        return 1;
+
+    i2c->CR1 &= ~I2C_CR1_PE;
+    gpio_init(context->gpio, context->scl_pin, GPIO_MODE_OUTPUT,
+              GPIO_OTYPE_OD, GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_init(context->gpio, context->sda_pin, GPIO_MODE_OUTPUT,
+              GPIO_OTYPE_OD, GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_write(context->gpio, context->sda_pin, 1U);
+    gpio_write(context->gpio, context->scl_pin, 1U);
+
+    for (uint8_t pulse = 0U; pulse < 9U; ++pulse) {
+        gpio_write(context->gpio, context->scl_pin, 0U);
+        i2c_recovery_delay();
+        gpio_write(context->gpio, context->scl_pin, 1U);
+        i2c_recovery_delay();
     }
-    
-    /* Send device address (read mode) */
-    I2Cx->DR = (DevAddress << 1) | 1;
-    
-    /* Wait for address to be sent */
-    if (i2c_wait_event(I2Cx, I2C_SR1_ADDR) != 0) {
-        I2Cx->CR1 |= I2C_CR1_STOP;
-        return 1;
-    }
-    
-    if (size == 1) {
-        /* Single byte read */
-        I2Cx->CR1 &= ~I2C_CR1_ACK;
-        
-        /* Clear ADDR flag */
-        uint32_t tmp = I2Cx->SR1;
-        tmp = I2Cx->SR2;
-        (void)tmp;
-        
-        /* Generate stop condition */
-        I2Cx->CR1 |= I2C_CR1_STOP;
-        
-        /* Wait for data to be received */
-        if (i2c_wait_event(I2Cx, I2C_SR1_RXNE) != 0) {
-            return 1;
-        }
-        
-        data[0] = I2Cx->DR;
-    }
-    else {
-        /* Multiple byte read */
-        I2Cx->CR1 |= I2C_CR1_ACK;
-        
-        /* Clear ADDR flag */
-        uint32_t tmp = I2Cx->SR1;
-        tmp = I2Cx->SR2;
-        (void)tmp;
-        
-        for (uint16_t i = 0; i < size; i++) {
-            if (i == size - 2) {
-                /* Last two bytes: disable ACK and generate STOP */
-                I2Cx->CR1 &= ~I2C_CR1_ACK;
-                I2Cx->CR1 |= I2C_CR1_STOP;
-            }
-            
-            /* Wait for data to be received */
-            if (i2c_wait_event(I2Cx, I2C_SR1_RXNE) != 0) {
-                return 1;
-            }
-            
-            data[i] = I2Cx->DR;
-        }
-    }
-    
-    return 0; // Success
+
+    gpio_write(context->gpio, context->sda_pin, 0U);
+    i2c_recovery_delay();
+    gpio_write(context->gpio, context->scl_pin, 1U);
+    i2c_recovery_delay();
+    gpio_write(context->gpio, context->sda_pin, 1U);
+    i2c_recovery_delay();
+
+    gpio_init(context->gpio, context->scl_pin, GPIO_MODE_AF, GPIO_OTYPE_OD,
+              GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_set_af(context->gpio, context->scl_pin,
+                context->alternate_function);
+    gpio_init(context->gpio, context->sda_pin, GPIO_MODE_AF, GPIO_OTYPE_OD,
+              GPIO_SPEED_HIGH, GPIO_PULLUP);
+    gpio_set_af(context->gpio, context->sda_pin,
+                context->alternate_function);
+
+    I2C_InitTypeDef saved_init = context->init;
+    return i2c_init(i2c, &saved_init);
 }
 
-/**
- * @brief Check if I2C device is ready
- * 
- * @param I2Cx I2C peripheral (I2C1, I2C2 or I2C3)
- * @param DevAddress Device I2C address
- * @param Trials Number of trials
- * @return uint8_t 0=ready, 1=not ready
- */
-uint8_t i2c_is_ready(I2C_TypeDef *I2Cx, uint8_t DevAddress, uint8_t Trials) {
-    while (Trials--) {
-        /* Wait for bus to be idle */
-        if (i2c_wait_event(I2Cx, 0x20000) != 0) {
-            continue;
-        }
-        
-        /* Generate start condition */
-        I2Cx->CR1 |= I2C_CR1_START;
-        
-        /* Wait for start condition to be generated */
-        if (i2c_wait_event(I2Cx, I2C_SR1_SB) != 0) {
-            I2Cx->CR1 |= I2C_CR1_STOP;
-            continue;
-        }
-        
-        /* Send address */
-        I2Cx->DR = DevAddress << 1;
-        
-        /* Wait for response (ADDR or AF flag) */
-        uint32_t timeout = 1000;
-        while (((I2Cx->SR1 & (I2C_SR1_ADDR | I2C_SR1_AF)) == 0) && timeout--) {
-            // Wait
-        }
-        
-        /* Check if ACK received (ADDR position 1) */
-        if (I2Cx->SR1 & I2C_SR1_ADDR) {
-            /* Device responded, clear ADDR flag */
-            uint32_t tmp = I2Cx->SR1;
-            tmp = I2Cx->SR2;
-            (void)tmp;
-            
-            /* Generate stop condition */
-            I2Cx->CR1 |= I2C_CR1_STOP;
-            
-            return 0; // Device is ready
-        } else {
-            /* Device did not respond, clear AF flag */
-            I2Cx->SR1 &= ~I2C_SR1_AF;
-        }
-        
-        /* Generate stop condition */
-        I2Cx->CR1 |= I2C_CR1_STOP;
-        
-        /* Short delay */
-        for (uint32_t i = 0; i < 10000; i++) {
-            __NOP();
+DriverStatus i2c_write(I2C_TypeDef *i2c, uint8_t device_address,
+                       const uint8_t *data, uint16_t size,
+                       uint32_t timeout)
+{
+    if ((!i2c_instance_valid(i2c)) || (data == NULL) || (size == 0U) ||
+        (device_address > 0x7FU) || (timeout == 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    DriverStatus status = i2c_wait_bus_idle(i2c, timeout);
+    if (status == DRIVER_STATUS_BUSY) {
+        status = i2c_recover_bus(i2c);
+        if (status == DRIVER_STATUS_OK) {
+            status = i2c_wait_bus_idle(i2c, timeout);
         }
     }
-    
-    return 1; // Device is not ready
+    if (status == DRIVER_STATUS_OK) {
+        status = i2c_start_and_address(i2c, device_address, 0U, timeout);
+    }
+    if (status != DRIVER_STATUS_OK) {
+        i2c_abort(i2c);
+        return status;
+    }
+
+    i2c_clear_addr(i2c);
+    for (uint16_t i = 0U; i < size; ++i) {
+        status = i2c_wait_sr1(i2c, I2C_SR1_TXE, timeout);
+        if (status != DRIVER_STATUS_OK) {
+            i2c_abort(i2c);
+            return status;
+        }
+        i2c->DR = data[i];
+    }
+
+    status = i2c_wait_sr1(i2c, I2C_SR1_BTF, timeout);
+    if (status != DRIVER_STATUS_OK) {
+        i2c_abort(i2c);
+        return status;
+    }
+    i2c->CR1 |= I2C_CR1_STOP;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus i2c_read(I2C_TypeDef *i2c, uint8_t device_address,
+                      uint8_t *data, uint16_t size, uint32_t timeout)
+{
+    if ((!i2c_instance_valid(i2c)) || (data == NULL) || (size == 0U) ||
+        (device_address > 0x7FU) || (timeout == 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    DriverStatus status = i2c_wait_bus_idle(i2c, timeout);
+    if (status == DRIVER_STATUS_BUSY) {
+        status = i2c_recover_bus(i2c);
+        if (status == DRIVER_STATUS_OK) {
+            status = i2c_wait_bus_idle(i2c, timeout);
+        }
+    }
+    if (status == DRIVER_STATUS_OK) {
+        status = i2c_start_and_address(i2c, device_address, 1U, timeout);
+    }
+    if (status != DRIVER_STATUS_OK) {
+        i2c_abort(i2c);
+        return status;
+    }
+
+    if (size == 1U) {
+        i2c->CR1 &= ~I2C_CR1_ACK;
+        i2c_clear_addr(i2c);
+        i2c->CR1 |= I2C_CR1_STOP;
+        status = i2c_wait_sr1(i2c, I2C_SR1_RXNE, timeout);
+        if (status == DRIVER_STATUS_OK) {
+            data[0] = (uint8_t)i2c->DR;
+        }
+    } else if (size == 2U) {
+        i2c->CR1 |= I2C_CR1_POS;
+        i2c->CR1 &= ~I2C_CR1_ACK;
+        i2c_clear_addr(i2c);
+        status = i2c_wait_sr1(i2c, I2C_SR1_BTF, timeout);
+        if (status == DRIVER_STATUS_OK) {
+            i2c->CR1 |= I2C_CR1_STOP;
+            data[0] = (uint8_t)i2c->DR;
+            data[1] = (uint8_t)i2c->DR;
+        }
+    } else {
+        uint16_t index = 0U;
+        uint16_t remaining = size;
+        i2c->CR1 |= I2C_CR1_ACK;
+        i2c_clear_addr(i2c);
+
+        while ((remaining > 3U) && (status == DRIVER_STATUS_OK)) {
+            status = i2c_wait_sr1(i2c, I2C_SR1_RXNE, timeout);
+            if (status == DRIVER_STATUS_OK) {
+                data[index++] = (uint8_t)i2c->DR;
+                --remaining;
+            }
+        }
+
+        if (status == DRIVER_STATUS_OK) {
+            status = i2c_wait_sr1(i2c, I2C_SR1_BTF, timeout);
+        }
+        if (status == DRIVER_STATUS_OK) {
+            i2c->CR1 &= ~I2C_CR1_ACK;
+            data[index++] = (uint8_t)i2c->DR;
+            --remaining;
+            status = i2c_wait_sr1(i2c, I2C_SR1_BTF, timeout);
+        }
+        if (status == DRIVER_STATUS_OK) {
+            i2c->CR1 |= I2C_CR1_STOP;
+            data[index++] = (uint8_t)i2c->DR;
+            --remaining;
+            data[index] = (uint8_t)i2c->DR;
+            --remaining;
+        }
+        (void)remaining;
+    }
+
+    i2c->CR1 &= ~I2C_CR1_POS;
+    i2c->CR1 |= I2C_CR1_ACK;
+    if (status != DRIVER_STATUS_OK) {
+        i2c_abort(i2c);
+    }
+    return status;
+}
+
+DriverStatus i2c_is_ready(I2C_TypeDef *i2c, uint8_t device_address,
+                          uint8_t trials, uint32_t timeout)
+{
+    if ((!i2c_instance_valid(i2c)) || (device_address > 0x7FU) ||
+        (trials == 0U) || (timeout == 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    while (trials > 0U) {
+        DriverStatus status = i2c_wait_bus_idle(i2c, timeout);
+        if (status == DRIVER_STATUS_BUSY) {
+            status = i2c_recover_bus(i2c);
+            if (status == DRIVER_STATUS_OK) {
+                status = i2c_wait_bus_idle(i2c, timeout);
+            }
+        }
+        if (status == DRIVER_STATUS_OK) {
+            status = i2c_start_and_address(i2c, device_address, 0U, timeout);
+        }
+        if (status == DRIVER_STATUS_OK) {
+            i2c_clear_addr(i2c);
+            i2c->CR1 |= I2C_CR1_STOP;
+            return DRIVER_STATUS_OK;
+        }
+        i2c_abort(i2c);
+        --trials;
+    }
+    return DRIVER_STATUS_NOT_READY;
 }

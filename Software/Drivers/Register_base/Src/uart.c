@@ -1,363 +1,224 @@
 /**
  * @file uart.c
- * @author GitHub Copilot
- * @date 2025-08-15
- * @brief STM32F4 UART register-level driver implementation
- *
- * @details This file contains UART function implementations for STM32F407 series
- * microcontrollers using direct register access.
+ * @brief STM32F4 register-level UART driver implementation.
  */
 
-#include "bsp.h"
+#include <stddef.h>
 
-/**
- * @brief Configure GPIO pins for UART
- * 
- * @param pins Pointer to UART pin configuration structure
- * @return uint8_t 0 if successful, 1 if error
- */
-static uint8_t uart_gpio_init(UART_PinConfig *pins)
+#include "systick.h"
+#include "uart.h"
+
+#define UART_ERROR_FLAGS (USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE)
+#define UART_CR1_INTERRUPT_MASK (USART_CR1_TXEIE | USART_CR1_TCIE | \
+                                 USART_CR1_RXNEIE | USART_CR1_IDLEIE | \
+                                 USART_CR1_PEIE)
+
+static uint8_t uart_instance_valid(USART_TypeDef *instance)
 {
-    if (pins == NULL) {
-        return 1;
+    return ((instance == USART1) || (instance == USART2) ||
+            (instance == USART3) || (instance == UART4) ||
+            (instance == UART5) || (instance == USART6)) ? 1U : 0U;
+}
+
+static DriverStatus uart_gpio_init(const UART_PinConfig *pins)
+{
+    if ((pins == NULL) || (pins->tx_port == NULL) ||
+        (pins->rx_port == NULL) || (pins->tx_pin >= 16U) ||
+        (pins->rx_pin >= 16U) || (pins->alt_func > 15U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Configure TX pin as alternate function */
-    gpio_init(pins->tx_port, pins->tx_pin, GPIO_MODE_AF, GPIO_OTYPE_PP, 
+
+    gpio_init(pins->tx_port, pins->tx_pin, GPIO_MODE_AF, GPIO_OTYPE_PP,
               GPIO_SPEED_HIGH, GPIO_PULLUP);
-    
-    /* Configure RX pin as alternate function */
-    gpio_init(pins->rx_port, pins->rx_pin, GPIO_MODE_AF, GPIO_OTYPE_PP, 
+    gpio_init(pins->rx_port, pins->rx_pin, GPIO_MODE_AF, GPIO_OTYPE_PP,
               GPIO_SPEED_HIGH, GPIO_PULLUP);
-    
-    /* Set alternate function for both pins */
     gpio_set_af(pins->tx_port, pins->tx_pin, pins->alt_func);
     gpio_set_af(pins->rx_port, pins->rx_pin, pins->alt_func);
-    
-    return 0;
+    return DRIVER_STATUS_OK;
 }
 
-/**
- * @brief Calculate UART BRR register value for given baud rate
- * 
- * @param pclk Peripheral clock frequency in Hz
- * @param baud Desired baud rate in bps
- * @return uint16_t BRR register value
- */
-static uint16_t uart_calculate_brr(uint32_t pclk, uint32_t baud)
+static void uart_clear_errors(USART_TypeDef *instance)
 {
-    uint16_t brr;
-    
-    /* Calculate BRR value based on baud rate formula */
-    brr = (uint16_t)(pclk / baud);
-    
-    return brr;
+    volatile uint32_t clear = instance->SR;
+    clear = instance->DR;
+    (void)clear;
 }
 
-
-/**
- * @brief Initialize UART peripheral
- * 
- * @param huart Pointer to UART handle structure
- * @param pins Pointer to UART pin configuration
- * @return uint8_t 0 if successful, 1 if error
- */
-uint8_t uart_init(UART_HandleTypeDef *huart, UART_PinConfig *pins)
+static DriverStatus uart_wait_flag(UART_HandleTypeDef *huart, uint32_t flag,
+                                   uint32_t timeout_ms)
 {
-    uint32_t pclk;
-    uint16_t brr_value;
-    
-    /* Validate input parameters */
-    if (huart == NULL || pins == NULL || huart->Instance == NULL) {
-        return 1;
-    }
-    
-    /* Initialize GPIO pins for UART */
-    if (uart_gpio_init(pins) != 0) {
-        return 1;
-    }
-    
-    /* Calculate peripheral clock frequency */
-    if (huart->Instance == USART1 || huart->Instance == USART6) {
-        pclk = rcc_get_pclk2_freq();
-    } else {
-        pclk = rcc_get_pclk1_freq();
-    }
-    
-    /* Calculate BRR register value for desired baud rate */
-    brr_value = uart_calculate_brr(pclk, huart->Init.BaudRate);
-    
-    /* Reset UART peripheral */
-    huart->Instance->CR1 = 0;
-    huart->Instance->CR2 = 0;
-    huart->Instance->CR3 = 0;
-    
-    /* Configure UART parameters */
-    huart->Instance->CR1 |= huart->Init.WordLength | huart->Init.Parity | huart->Init.Mode;
-    huart->Instance->CR2 |= huart->Init.StopBits;
-    huart->Instance->CR3 |= huart->Init.HardwareFlowControl;
-    
-    /* Set baud rate */
-    huart->Instance->BRR = brr_value;
-    
-    /* Enable UART */
-    huart->Instance->CR1 |= USART_CR1_UE;
-    
-    /* Initialize handle state variables */
-    huart->TxBusy = 0;
-    huart->RxBusy = 0;
-    
-    return 0;
-}
-
-/**
- * @brief Send data through UART (blocking mode)
- * 
- * @param huart Pointer to UART handle structure
- * @param data Pointer to data buffer
- * @param size Buffer size
- * @param timeout Timeout in milliseconds
- * @return uint8_t 0 if successful, 1 if error
- */
-uint8_t uart_transmit(UART_HandleTypeDef *huart, uint8_t *data, uint16_t size, uint32_t timeout)
-{
-    uint32_t start_time = 0;
-    uint32_t current_time = 0;
-    
-    /* Validate input parameters */
-    if (huart == NULL || data == NULL || size == 0) {
-        return 1;
-    }
-    
-    /* Check if transmission is already ongoing */
-    if (huart->TxBusy == 1) {
-        return 1;
-    }
-    
-    /* Set transmission state to busy */
-    huart->TxBusy = 1;
-    
-    /* Get start time for timeout calculation */
-    start_time = systick_get_ms();
-    
-    /* Transmit data byte by byte */
-    for (uint16_t i = 0; i < size; i++) {
-        /* Wait until TXE flag is set (transmit data register empty) */
-        while (!(huart->Instance->SR & USART_SR_TXE)) {
-            /* Check for timeout */
-            current_time = systick_get_ms();
-            if ((current_time - start_time) > timeout) {
-                huart->TxBusy = 0;
-                return 1;
-            }
+    uint32_t start = systick_get_ms();
+    uint32_t spins = UART_FALLBACK_SPIN_LIMIT;
+    while (spins > 0U) {
+        uint32_t status = huart->Instance->SR;
+        if ((status & UART_ERROR_FLAGS) != 0U) {
+            uart_clear_errors(huart->Instance);
+            return DRIVER_STATUS_IO_ERROR;
         }
-        
-        /* Transmit byte */
-        huart->Instance->DR = (data[i] & 0xFF);
+        if ((status & flag) != 0U) {
+            return DRIVER_STATUS_OK;
+        }
+        if ((systick_get_ms() - start) >= timeout_ms) {
+            return DRIVER_STATUS_TIMEOUT;
+        }
+        --spins;
     }
-    
-    /* Wait until TC flag is set (transmission complete) */
-    while (!(huart->Instance->SR & USART_SR_TC)) {
-        /* Check for timeout */
-        current_time = systick_get_ms();
-        if ((current_time - start_time) > timeout) {
-            huart->TxBusy = 0;
-            return 1;
+    return DRIVER_STATUS_TIMEOUT;
+}
+
+DriverStatus uart_init(UART_HandleTypeDef *huart, const UART_PinConfig *pins)
+{
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance)) ||
+        (huart->Init.BaudRate == 0U) ||
+        ((huart->Init.WordLength != UART_WORDLENGTH_8B) &&
+         (huart->Init.WordLength != UART_WORDLENGTH_9B)) ||
+        ((huart->Init.StopBits != UART_STOPBITS_1) &&
+         (huart->Init.StopBits != UART_STOPBITS_0_5) &&
+         (huart->Init.StopBits != UART_STOPBITS_2) &&
+         (huart->Init.StopBits != UART_STOPBITS_1_5)) ||
+        ((huart->Init.Parity != UART_PARITY_NONE) &&
+         (huart->Init.Parity != UART_PARITY_EVEN) &&
+         (huart->Init.Parity != UART_PARITY_ODD)) ||
+        ((huart->Init.Mode != UART_MODE_TX) &&
+         (huart->Init.Mode != UART_MODE_RX) &&
+         (huart->Init.Mode != UART_MODE_TX_RX)) ||
+        (huart->Init.HardwareFlowControl != UART_HWCONTROL_NONE)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+
+    DriverStatus status = uart_gpio_init(pins);
+    if (status != DRIVER_STATUS_OK) {
+        return status;
+    }
+
+    uint32_t pclk = ((huart->Instance == USART1) ||
+                     (huart->Instance == USART6)) ?
+                    rcc_get_pclk2_freq() : rcc_get_pclk1_freq();
+    uint32_t brr = (pclk + (huart->Init.BaudRate / 2U)) /
+                   huart->Init.BaudRate;
+    if ((brr == 0U) || (brr > 0xFFFFU)) {
+        return DRIVER_STATUS_OUT_OF_RANGE;
+    }
+
+    huart->Instance->CR1 = 0U;
+    huart->Instance->CR2 = huart->Init.StopBits;
+    huart->Instance->CR3 = huart->Init.HardwareFlowControl;
+    huart->Instance->BRR = brr;
+    huart->Instance->CR1 = huart->Init.WordLength | huart->Init.Parity |
+                           huart->Init.Mode | USART_CR1_UE;
+    huart->TxBusy = 0U;
+    huart->RxBusy = 0U;
+    return DRIVER_STATUS_OK;
+}
+
+DriverStatus uart_transmit(UART_HandleTypeDef *huart, const uint8_t *data,
+                           uint16_t size, uint32_t timeout_ms)
+{
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance)) ||
+        (data == NULL) || (size == 0U) || (timeout_ms == 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    if (huart->TxBusy != 0U) {
+        return DRIVER_STATUS_BUSY;
+    }
+
+    huart->TxBusy = 1U;
+    DriverStatus status = DRIVER_STATUS_OK;
+    for (uint16_t i = 0U; (i < size) && (status == DRIVER_STATUS_OK); ++i) {
+        status = uart_wait_flag(huart, USART_SR_TXE, timeout_ms);
+        if (status == DRIVER_STATUS_OK) {
+            huart->Instance->DR = data[i];
         }
     }
-    
-    /* Set transmission state to idle */
-    huart->TxBusy = 0;
-    
-    return 0;
+    if (status == DRIVER_STATUS_OK) {
+        status = uart_wait_flag(huart, USART_SR_TC, timeout_ms);
+    }
+    huart->TxBusy = 0U;
+    return status;
 }
 
-/**
- * @brief Receive data through UART (blocking mode)
- * 
- * @param huart Pointer to UART handle structure
- * @param data Pointer to data buffer
- * @param size Buffer size
- * @param timeout Timeout in milliseconds
- * @return uint8_t 0 if successful, 1 if error
- */
-uint8_t uart_receive(UART_HandleTypeDef *huart, uint8_t *data, uint16_t size, uint32_t timeout)
+DriverStatus uart_receive(UART_HandleTypeDef *huart, uint8_t *data,
+                          uint16_t size, uint32_t timeout_ms)
 {
-    uint32_t start_time = 0;
-    uint32_t current_time = 0;
-    
-    /* Validate input parameters */
-    if (huart == NULL || data == NULL || size == 0) {
-        return 1;
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance)) ||
+        (data == NULL) || (size == 0U) || (timeout_ms == 0U)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Check if reception is already ongoing */
-    if (huart->RxBusy == 1) {
-        return 1;
+    if (huart->RxBusy != 0U) {
+        return DRIVER_STATUS_BUSY;
     }
-    
-    /* Set reception state to busy */
-    huart->RxBusy = 1;
-    
-    /* Get start time for timeout calculation */
-    start_time = systick_get_ms();
-    
-    /* Receive data byte by byte */
-    for (uint16_t i = 0; i < size; i++) {
-        /* Wait until RXNE flag is set (read data register not empty) */
-        while (!(huart->Instance->SR & USART_SR_RXNE)) {
-            /* Check for timeout */
-            current_time = systick_get_ms();
-            if ((current_time - start_time) > timeout) {
-                huart->RxBusy = 0;
-                return 1;
-            }
+
+    huart->RxBusy = 1U;
+    DriverStatus status = DRIVER_STATUS_OK;
+    for (uint16_t i = 0U; (i < size) && (status == DRIVER_STATUS_OK); ++i) {
+        status = uart_wait_flag(huart, USART_SR_RXNE, timeout_ms);
+        if (status == DRIVER_STATUS_OK) {
+            data[i] = (uint8_t)huart->Instance->DR;
         }
-        
-        /* Receive byte */
-        data[i] = (uint8_t)(huart->Instance->DR & 0xFF);
     }
-    
-    /* Set reception state to idle */
-    huart->RxBusy = 0;
-    
-    return 0;
+    huart->RxBusy = 0U;
+    return status;
 }
 
-/**
- * @brief Send single character through UART
- * 
- * @param huart Pointer to UART handle structure
- * @param data Character to send
- * @return uint8_t 0 if successful, 1 if error
- */
-uint8_t uart_transmit_char(UART_HandleTypeDef *huart, uint8_t data)
+DriverStatus uart_transmit_char(UART_HandleTypeDef *huart, uint8_t data,
+                                uint32_t timeout_ms)
 {
-    /* Validate input parameter */
-    if (huart == NULL) {
-        return 1;
-    }
-    
-    /* Wait until TXE flag is set (transmit data register empty) */
-    while (!(huart->Instance->SR & USART_SR_TXE));
-    
-    /* Transmit byte */
-    huart->Instance->DR = (data & 0xFF);
-    
-    /* Wait until TC flag is set (transmission complete) */
-    while (!(huart->Instance->SR & USART_SR_TC));
-    
-    return 0;
+    return uart_transmit(huart, &data, 1U, timeout_ms);
 }
 
-/**
- * @brief Receive single character through UART
- * 
- * @param huart Pointer to UART handle structure
- * @return int16_t Received character or -1 if error
- */
-int16_t uart_receive_char(UART_HandleTypeDef *huart)
+DriverStatus uart_receive_char(UART_HandleTypeDef *huart, uint8_t *data,
+                               uint32_t timeout_ms)
 {
-    /* Validate input parameter */
-    if (huart == NULL) {
-        return -1;
-    }
-    
-    /* Check for errors */
-    if (huart->Instance->SR & (USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE)) {
-        /* Clear error flags by reading DR register */
-        (void)huart->Instance->DR;
-        return -1;
-    }
-    
-    /* Wait until RXNE flag is set (read data register not empty) */
-    if (huart->Instance->SR & USART_SR_RXNE) {
-        /* Receive byte */
-        return (int16_t)(huart->Instance->DR & 0xFF);
-    }
-    
-    return -1;
+    return uart_receive(huart, data, 1U, timeout_ms);
 }
 
-/**
- * @brief Send string through UART
- * 
- * @param huart Pointer to UART handle structure
- * @param str Null-terminated string to send
- * @return uint8_t 0 if successful, 1 if error
- */
-uint8_t uart_transmit_string(UART_HandleTypeDef *huart, const char *str)
+DriverStatus uart_transmit_string(UART_HandleTypeDef *huart, const char *str,
+                                  uint32_t timeout_ms)
 {
-    uint16_t i = 0;
-    
-    /* Validate input parameters */
-    if (huart == NULL || str == NULL) {
-        return 1;
+    if (str == NULL) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Transmit string character by character */
-    while (str[i] != '\0') {
-        uart_transmit_char(huart, str[i++]);
+    uint32_t length = 0U;
+    while ((str[length] != '\0') && (length < 0xFFFFU)) {
+        ++length;
     }
-    
-    return 0;
+    if ((length == 0U) || (length == 0xFFFFU)) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    return uart_transmit(huart, (const uint8_t *)str,
+                         (uint16_t)length, timeout_ms);
 }
 
-/**
- * @brief Check if UART flag is set
- * 
- * @param huart Pointer to UART handle structure
- * @param flag Flag to check
- * @return uint8_t 1 if flag is set, 0 otherwise
- */
-uint8_t uart_get_flag_status(UART_HandleTypeDef *huart, uint16_t flag)
+uint8_t uart_get_flag_status(const UART_HandleTypeDef *huart, uint16_t flag)
 {
-    /* Validate input parameter */
-    if (huart == NULL) {
-        return 0;
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance))) {
+        return 0U;
     }
-    
-    /* Check if flag is set */
-    if (huart->Instance->SR & flag) {
-        return 1;
-    }
-    
-    return 0;
+    return ((huart->Instance->SR & flag) != 0U) ? 1U : 0U;
 }
 
-/**
- * @brief Enable UART interrupt
- * 
- * @param huart Pointer to UART handle structure
- * @param interrupt Interrupt to enable
- */
-void uart_enable_interrupt(UART_HandleTypeDef *huart, uint16_t interrupt)
+DriverStatus uart_enable_interrupt(UART_HandleTypeDef *huart,
+                                   uint32_t interrupts)
 {
-    /* Validate input parameter */
-    if (huart == NULL) {
-        return;
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Enable specified interrupt */
-    huart->Instance->CR1 |= interrupt;
+    huart->Instance->CR1 |= interrupts & UART_CR1_INTERRUPT_MASK;
+    if ((interrupts & UART_IT_ERROR) != 0U) {
+        huart->Instance->CR3 |= USART_CR3_EIE;
+    }
+    return DRIVER_STATUS_OK;
 }
 
-/**
- * @brief Disable UART interrupt
- * 
- * @param huart Pointer to UART handle structure
- * @param interrupt Interrupt to disable
- */
-void uart_disable_interrupt(UART_HandleTypeDef *huart, uint16_t interrupt)
+DriverStatus uart_disable_interrupt(UART_HandleTypeDef *huart,
+                                    uint32_t interrupts)
 {
-    /* Validate input parameter */
-    if (huart == NULL) {
-        return;
+    if ((huart == NULL) || (!uart_instance_valid(huart->Instance))) {
+        return DRIVER_STATUS_INVALID_ARGUMENT;
     }
-    
-    /* Disable specified interrupt */
-    huart->Instance->CR1 &= ~interrupt;
+    huart->Instance->CR1 &= ~(interrupts & UART_CR1_INTERRUPT_MASK);
+    if ((interrupts & UART_IT_ERROR) != 0U) {
+        huart->Instance->CR3 &= ~USART_CR3_EIE;
+    }
+    return DRIVER_STATUS_OK;
 }
-
-
-

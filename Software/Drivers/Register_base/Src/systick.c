@@ -18,7 +18,9 @@
  ******************************************************************************
  */
 
-#include "bsp.h"
+#include <stddef.h>
+
+#include "systick.h"
 
 
 /* Global variables */
@@ -35,7 +37,7 @@ volatile uint32_t system_tick_ms = 0;    /**< System time counter in millisecond
  * @return uint8_t 0 if successful, 1 if reload value exceeds 24-bit limit
  * 
  * @note SysTick uses processor clock (HCLK) as clock source
- * @warning Maximum reload value is 0xFFFFFF (24-bit), limiting max clock to ~16.7MHz
+ * @note At a 1 ms tick, the 24-bit reload supports clocks up to about 16.7 GHz
  */
 uint8_t systick_init(uint32_t system_clock_hz)
 {
@@ -43,7 +45,7 @@ uint8_t systick_init(uint32_t system_clock_hz)
     uint32_t reload_value = system_clock_hz / SYSTICK_FREQUENCY_HZ;
     
     /* Check if reload value fits in 24-bit register */
-    if (reload_value > SysTick_LOAD_RELOAD_Msk) {
+    if ((reload_value == 0U) || (reload_value > SysTick_LOAD_RELOAD_Msk)) {
         return 1; // Error: reload value too large for 24-bit register
     }
     
@@ -196,7 +198,7 @@ void systick_timer_init(SysTick_Timer_t *timer, uint32_t interval_ms, uint8_t au
  */
 void systick_timer_start(SysTick_Timer_t *timer)
 {
-    if (!timer) return;    /* Null pointer protection */
+    if (!timer || timer->interval == 0U) return;
     
     timer->start_time = systick_get_ms();    /* Record current time */
     timer->enabled = 1;                      /* Enable timer */
@@ -234,8 +236,8 @@ uint8_t systick_timer_expired(SysTick_Timer_t *timer)
     /* Check if timer interval has elapsed */
     if (systick_elapsed_ms(timer->start_time) >= timer->interval) {
         if (timer->auto_reload) {
-            /* Auto-reload timer: restart automatically */
-            timer->start_time = systick_get_ms();
+            uint32_t elapsed = systick_elapsed_ms(timer->start_time);
+            timer->start_time += (elapsed / timer->interval) * timer->interval;
         } else {
             /* One-shot timer: disable after expiring */
             timer->enabled = 0;

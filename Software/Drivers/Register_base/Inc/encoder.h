@@ -14,6 +14,7 @@
 #include "stm32f407xx.h"
 #include "tim.h"
 #include "gpio.h"
+#include "driver_status.h"
 
 /**
  * @brief Encoder configuration structure
@@ -36,6 +37,9 @@ typedef struct {
     int32_t LastCount;           /**< Last total count for speed calculation */
     int32_t Speed;               /**< Current speed in RPM */
     uint32_t LastTimeMs;         /**< Last time measurement in ms */
+    uint32_t CounterPeriod;      /**< Hardware counter period (ARR + 1) */
+    uint16_t LastHardwareCount;  /**< Previous hardware counter sample */
+    int8_t LastDirection;        /**< Last measured direction */
 } Encoder_HandleTypeDef;
 
 /**
@@ -56,11 +60,12 @@ typedef struct {
  * 
  * @param handle Pointer to encoder handle structure
  * @param init Pointer to encoder initialization structure
- * @return uint8_t 0 if successful, 1 if error
+ * @return DriverStatus describing success or the failure reason
  * 
  * @note GPIO pins must be configured separately before calling this function
  */
-uint8_t encoder_init(Encoder_HandleTypeDef *handle, Encoder_InitTypeDef *init);
+DriverStatus encoder_init(Encoder_HandleTypeDef *handle,
+                          const Encoder_InitTypeDef *init);
 
 /**
  * @brief Configure GPIO pins for encoder input

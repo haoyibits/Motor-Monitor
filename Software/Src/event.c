@@ -206,13 +206,18 @@ void encoder_handler(void)
  */
 void current_handler(void)
 {
+    if (current_adcDmaError != 0U) {
+        current_adcDmaError = 0U;
+        if (motor_config.overcurrent_protection != 0U) {
+            motor_emergency_shutdown();
+        }
+        return;
+    }
+
     if (current_adcAverageReady) {
-            /* Calculate average current from ADC buffer */
-            sum = 0;
-            for (int i = 0; i < 200; i++) 
-                sum += current_adcBuffer[i];
-            current_adcAverage = sum / 200;
-            
+            /* Claim this notification first; an ISR during processing posts the next one. */
+            current_adcAverageReady = 0U;
+
             /* Update motor state and threshold based on current conditions */
             motor_current_state_update();
             
@@ -242,7 +247,6 @@ void current_handler(void)
                 //                 motor_monitor.state, current_adcAverage, motor_monitor.current_threshold);
             }
             
-        current_adcAverageReady = 0;
     }
 }
 
@@ -300,7 +304,8 @@ void scan_check(void)
     /* Refresh debounced input before the UI consumes button state. */
     button_handler();
 
-    if (systick_timer_expired(&current_timer) && current_adcAverageReady) {
+    if (systick_timer_expired(&current_timer) &&
+        ((current_adcAverageReady != 0U) || (current_adcDmaError != 0U))) {
         (void)app_event_queue_push(&app_event_queue,
                                    (App_Event_t){.type = APP_EVENT_CURRENT_SAMPLE});
     }
