@@ -23,14 +23,14 @@ set(linker_script_SRC ${linker_script_SRC}
 # Sources
 set(sources_SRCS ${sources_SRCS}
     
-	${CMAKE_CURRENT_SOURCE_DIR}/app/src/main.c
+	${CMAKE_CURRENT_SOURCE_DIR}/Src/main.c
 	${CMAKE_CURRENT_SOURCE_DIR}/Startup/startup_stm32f407vgtx.s
 )
 
 # Include directories
 set(include_c_DIRS ${include_c_DIRS}
     
-	${CMAKE_CURRENT_SOURCE_DIR}/app/inc
+	${CMAKE_CURRENT_SOURCE_DIR}/Inc
 )
 set(include_cxx_DIRS ${include_cxx_DIRS}
     

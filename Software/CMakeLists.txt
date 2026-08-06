@@ -31,32 +31,31 @@ set(cpu_PARAMS
 )
 
 # Sources
+#set(sources_SRCS)
 file(GLOB_RECURSE sources_SRCS
-        ${CMAKE_SOURCE_DIR}/app/src/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/mcu_peripherals/src/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/external_devices/src/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/RTT/RTT/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/Device/ST/STM32F4xx/Source/Templates/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/Driver/Hardware_Driver/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/Driver/Software_Driver/*.c
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/OLED_UI/*.c
-        ${CMAKE_SOURCE_DIR}/app/ui/*.c
+        ${CMAKE_SOURCE_DIR}/Src/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver/*.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI/*.c
 )
 # Include directories for all compilers
 set(include_DIRS
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/Include
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/RTT/RTT
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/RTT/Config
-        ${CMAKE_SOURCE_DIR}/drivers/cmsis/Device/ST/STM32F4xx/Include
-        ${CMAKE_SOURCE_DIR}/app/inc
-        ${CMAKE_SOURCE_DIR}/drivers/mcu_peripherals/inc
-        ${CMAKE_SOURCE_DIR}/drivers/external_devices/inc
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/Driver/Hardware_Driver
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/Driver/Software_Driver
-        ${CMAKE_SOURCE_DIR}/drivers/ui_core/OLED_UI
-        ${CMAKE_SOURCE_DIR}/app/ui
-        ${CMAKE_SOURCE_DIR}/config
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/Config
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include
+        ${CMAKE_SOURCE_DIR}/Inc
+        ${CMAKE_SOURCE_DIR}/Scr
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Inc
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Scr
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI
+        
 ) 
 
 # Include directories for each compiler
@@ -98,15 +97,15 @@ link_directories(${CMAKE_PROJECT_NAME} ${link_DIRS})
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
-        app/inc/bsp.h
-        drivers/mcu_peripherals/src/gpio.c
-        drivers/mcu_peripherals/inc/gpio.h
-        drivers/mcu_peripherals/src/tim.c
-        drivers/mcu_peripherals/inc/tim.h
-        drivers/external_devices/src/encoder.c
-        drivers/external_devices/inc/encoder.h
-        drivers/mcu_peripherals/src/systick.c
-        drivers/mcu_peripherals/inc/systick.h)
+        Inc/bsp.h
+        Drivers/Register_base/Src/gpio.c
+        Drivers/Register_base/Inc/gpio.h
+        Drivers/Register_base/Src/tim.c
+        Drivers/Register_base/Inc/tim.h
+        Drivers/Register_base/Src/encoder.c
+        Drivers/Register_base/Inc/encoder.h
+        Drivers/Register_base/Src/systick.c
+        Drivers/Register_base/Inc/systick.h)
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PUBLIC ${sources_SRCS})
