@@ -15,7 +15,6 @@
 #include "spi.h"
 #include "event.h"
 #include "motor.h"
-#include "../Drivers/OLED_UI_Core/OLED_UI/OLED_UI_MenuData.h"
 
 /* Global ADC buffer for 200 samples */
 volatile uint16_t current_adcBuffer[200];  /* Removed static to allow access from irq.c and made volatile for DMA writes */
@@ -23,13 +22,6 @@ uint16_t current_adcAverage = 0;  /* Latest calculated average */
 volatile uint8_t current_adcAverageReady = 0;  /* Flag indicating new average is ready */
 uint32_t sum = 0;
 
-/* Motor current monitoring global instance */
-Motor_Current_Monitor_t motor_monitor = {
-    .state = MOTOR_STATE_STOPPED,
-    .startup_start_time = 0,
-    .overcurrent_count = 0,
-    .current_threshold = CURRENT_RUNNING_THRESHOLD
-};
 /**
  * @brief Initialize RCC (Reset and Clock Control)
  * 
@@ -265,7 +257,5 @@ void system_init(void)
     /* Continue with remaining system initialization */
     adc_dma_init();         // Initialize ADC with DMA in continuous mode
     
-    /* Initialize OLED display system */
-    OLED_Init();            // Initialize OLED hardware (I2C + display)
-    /* Note: motor_apply_config() moved to main() after UI initialization */
+    /* UI hardware is initialized once by OLED_UI_Init() in the application layer. */
 }

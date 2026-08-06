@@ -30,16 +30,38 @@ set(cpu_PARAMS
     # -mcpu, -mfloat, -mfloat-abi, ...
 )
 
-# Sources
-#set(sources_SRCS)
-file(GLOB_RECURSE sources_SRCS
-        ${CMAKE_SOURCE_DIR}/Src/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver/*.c
-        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI/*.c
+# Sources are explicit so unrelated examples or generated files cannot enter firmware builds.
+set(sources_SRCS
+        ${CMAKE_SOURCE_DIR}/Application/Src/app_event_queue.c
+        ${CMAKE_SOURCE_DIR}/Application/Src/motor_config_service.c
+        ${CMAKE_SOURCE_DIR}/Application/Src/motor_state.c
+        ${CMAKE_SOURCE_DIR}/Application/Src/motor_ui_model.c
+        ${CMAKE_SOURCE_DIR}/Src/bsp.c
+        ${CMAKE_SOURCE_DIR}/Src/event.c
+        ${CMAKE_SOURCE_DIR}/Src/irq.c
+        ${CMAKE_SOURCE_DIR}/Src/motor.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/adc.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/button.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/dma.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/encoder.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/gpio.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/i2c.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/rcc.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/spi.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/ssd1309.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/systick.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/tim.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/uart.c
+        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Src/w25q128.c
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT/SEGGER_RTT.c
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT/SEGGER_RTT_printf.c
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/system_stm32f4xx.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver/OLED_UI_Driver.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver/OLED_driver.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver/OLED.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver/OLED_Fonts.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI/OLED_UI.c
+        ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/OLED_UI/OLED_UI_MenuData.c
 )
 # Include directories for all compilers
 set(include_DIRS
@@ -47,10 +69,9 @@ set(include_DIRS
         ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/RTT
         ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/RTT/Config
         ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include
+        ${CMAKE_SOURCE_DIR}/Application/Inc
         ${CMAKE_SOURCE_DIR}/Inc
-        ${CMAKE_SOURCE_DIR}/Scr
         ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/Register_base/Scr
         ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core
         ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Hardware_Driver
         ${CMAKE_SOURCE_DIR}/Drivers/OLED_UI_Core/Driver/Software_Driver
@@ -96,19 +117,7 @@ include("cmake/vscode_generated.cmake")
 link_directories(${CMAKE_PROJECT_NAME} ${link_DIRS})
 
 # Create an executable object type
-add_executable(${CMAKE_PROJECT_NAME}
-        Inc/bsp.h
-        Drivers/Register_base/Src/gpio.c
-        Drivers/Register_base/Inc/gpio.h
-        Drivers/Register_base/Src/tim.c
-        Drivers/Register_base/Inc/tim.h
-        Drivers/Register_base/Src/encoder.c
-        Drivers/Register_base/Inc/encoder.h
-        Drivers/Register_base/Src/systick.c
-        Drivers/Register_base/Inc/systick.h)
-
-# Add sources to executable
-target_sources(${CMAKE_PROJECT_NAME} PUBLIC ${sources_SRCS})
+add_executable(${CMAKE_PROJECT_NAME} ${sources_SRCS})
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

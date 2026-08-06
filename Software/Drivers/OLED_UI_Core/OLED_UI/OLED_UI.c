@@ -18,8 +18,9 @@ MutexFlag KeyEnterFlag = FLAGEND;									//全局enter按键的互斥锁，互�
 MutexFlag FadeOutFlag = FLAGEND;									//渐隐效果的互斥锁，互斥锁为FLAGSTART时表示正在执行渐隐效果
 bool ColorMode = DARKMODE;											//全局布尔型数据，存储当前显示模式，true为深色模式，false为浅色模式
 bool OLED_UI_ShowFps = false;										//全局布尔型数据，用于控制是否显示帧率
-int16_t OLED_UI_Brightness = 100;									//全局变量，存储当前屏幕亮度
+int32_t OLED_UI_Brightness = 100;									//全局变量，存储当前屏幕亮度
 OLED_UI_WindowSustainCounter OLED_SustainCounter = {0,false};		//用于存储窗口持续时间的结构体
+static bool WindowResultHandled = false;
 int tmpi=0;                                                       	//Gif动画缓速播放temp值
 
 /***********************************************************************************************/
@@ -528,12 +529,12 @@ int16_t CalcStringWidth(int16_t ChineseFont, int16_t ASCIIFont, const char *form
  * @param *float_tdata 指针，用于存储float数据
  * @return 浮点值为返回 WINDOW_DATA_STYLE_FLOAT ，int16_t值为返回 WINDOW_DATA_STYLE_INT ，空指针返回 WINDOW_DATA_STYLE_NONE
  */
-int8_t GetWindowDataStyle(int16_t *int16_tdata,float *float_tdata){
+int8_t GetWindowDataStyle(int32_t *integer_data,float *float_tdata){
 	//保护避免访问非法内存
 	if(CurrentWindow == NULL){
 		return -1;
 	}
-	if(int16_tdata != NULL){
+	if(integer_data != NULL){
 		return WINDOW_DATA_STYLE_INT;
 	}else if(float_tdata != NULL){
 		return WINDOW_DATA_STYLE_FLOAT;
@@ -597,9 +598,9 @@ void OLED_DrawWindow(void){
 			if (DataStyle == WINDOW_DATA_STYLE_INT)
 			{
 				//计算字符串被限制的最大宽度
-				MaxLength = OLED_UI_Window.CurrentArea.Width - 2*CurrentWindow->Text_FontSideDistance - CalcStringWidth(ChineseFont,ASCIIFont,"%3d",*CurrentWindow->Prob_Data_Int)- WINDOW_DATA_TEXT_DISTANCE;
+				MaxLength = OLED_UI_Window.CurrentArea.Width - 2*CurrentWindow->Text_FontSideDistance - CalcStringWidth(ChineseFont,ASCIIFont,"%ld",(long)*CurrentWindow->Prob_Data_Int)- WINDOW_DATA_TEXT_DISTANCE;
 				//计算数据所占的宽度
-				DataLength = CalcStringWidth(ChineseFont,ASCIIFont,"%3d",*CurrentWindow->Prob_Data_Int);
+				DataLength = CalcStringWidth(ChineseFont,ASCIIFont,"%ld",(long)*CurrentWindow->Prob_Data_Int);
 				//显示数据
 				OLED_PrintfMixArea(
 					//区域限制
@@ -610,7 +611,7 @@ void OLED_DrawWindow(void){
 					OLED_UI_Window.CurrentArea.X + CurrentWindow->General_Width - 1 - CurrentWindow->Text_FontSideDistance - DataLength,
 					OLED_UI_Window.CurrentArea.Y + CurrentWindow->Text_FontTopDistance,
 					ChineseFont,ASCIIFont,
-					"%3d",*CurrentWindow->Prob_Data_Int);
+					"%ld",(long)*CurrentWindow->Prob_Data_Int);
 
 			}else{//否则默认认为是浮点型数据
 			
@@ -755,9 +756,9 @@ void SetTargetCursor(void){
 				RadioCompensationWidth = (GetOLED_Font(CurrentMenuPage->General_FontSize,CHINESE) + 2);
 		}
 		else if(CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_IntBox != NULL){
-				char IntBoxValue[5]; // 用于存储IntBox的值转换后的字符串
+				char IntBoxValue[12]; // Stores a signed 32-bit value and terminator
 				// 将IntBox的值转换为字符串
-				sprintf(IntBoxValue, "%d", *CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_IntBox);
+				snprintf(IntBoxValue, sizeof(IntBoxValue), "%ld", (long)*CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_IntBox);
 				RadioCompensationWidth = (GetOLED_Font(CurrentMenuPage->General_FontSize,CHINESE) + (strlen(IntBoxValue) * 4));
 		}
 		else if(CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_FloatBox != NULL){
@@ -963,9 +964,9 @@ void PrintMenuElements(void){
 			}	
 			// 如果需要显示IntBox的值(即IntBox不为空)
 			else if(page->General_MenuItems[i].List_IntBox != NULL){
-				char IntBoxValue[5]; // 用于存储IntBox的值转换后的字符串
+				char IntBoxValue[12]; // Stores a signed 32-bit value and terminator
 				// 将IntBox的值转换为字符串
-				sprintf(IntBoxValue, "%d", *page->General_MenuItems[i].List_IntBox);
+				snprintf(IntBoxValue, sizeof(IntBoxValue), "%ld", (long)*page->General_MenuItems[i].List_IntBox);
 				
 				RadioCompensationWidth = (ChineseFont + (strlen(IntBoxValue) * 4));
 							
@@ -1367,7 +1368,31 @@ void OLED_UI_CreateWindow(MenuWindow* window){
 	window->_LineSlip = 0;
 	//将当前窗口指针指向window
 	CurrentWindow = window;
+	WindowResultHandled = false;
 	
+}
+
+/**
+ * @brief Close the active window and deliver its result once.
+ * @param confirmed true when Enter confirms, false on Back or timeout
+ */
+static void OLED_UI_FinishWindow(bool confirmed)
+{
+	if (CurrentWindow == NULL || WindowResultHandled) {
+		return;
+	}
+
+	WindowResultHandled = true;
+	if (confirmed) {
+		if (CurrentWindow->General_OnConfirm != NULL) {
+			CurrentWindow->General_OnConfirm();
+		}
+	} else if (CurrentWindow->General_OnCancel != NULL) {
+		CurrentWindow->General_OnCancel();
+	}
+
+	OLED_SustainCounter.SustainFlag = false;
+	OLED_SustainCounter.count = 0;
 }
 
 
@@ -1473,6 +1498,9 @@ void RunFadeOut(void){
 					CurrentMenuPage = CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].General_SubMenuPage;
 					//对当前子菜单进行初始化
 					CurrentMenuPageInit();
+					if (CurrentMenuPage->General_OnEnter != NULL) {
+						CurrentMenuPage->General_OnEnter();
+					}
 				}
 				//当前菜单项的页面类型是列表类的情况下，按下了取消按键
 				if(FadeOutFlag == BACK_FLAGSTART) {
@@ -1504,6 +1532,9 @@ void RunFadeOut(void){
 					CurrentMenuPage = CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].General_SubMenuPage;
 					//对当前子菜单进行初始化
 					CurrentMenuPageInit();
+					if (CurrentMenuPage->General_OnEnter != NULL) {
+						CurrentMenuPage->General_OnEnter();
+					}
 
 				}
 				//当前菜单项的页面类型是磁贴类的情况下，按下了返回操作
@@ -1717,7 +1748,7 @@ void OLED_UI_InterruptHandler(void){
 			}else{
 				// Only close window if it's not permanent (General_ContinueTime >= 0)
 				if(CurrentWindow != NULL && CurrentWindow->General_ContinueTime >= 0.0f){
-					OLED_SustainCounter.count = (int16_t)(CurrentWindow->General_ContinueTime * 50);
+					OLED_UI_FinishWindow(false);
 				}
 			}
 			
@@ -1729,8 +1760,8 @@ void OLED_UI_InterruptHandler(void){
 				if (CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_BoolRadioBox != NULL) {
 				    *CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_BoolRadioBox = !(*CurrentMenuPage->General_MenuItems[CurrentMenuPage->_ActiveMenuID].List_BoolRadioBox);
 				}
-			}else{
-				OLED_SustainCounter.count = 0;
+			}else if(CurrentWindow != NULL && CurrentWindow->General_ContinueTime >= 0.0f){
+				OLED_UI_FinishWindow(true);
 			}
 		}
 		
@@ -1744,11 +1775,8 @@ void OLED_UI_InterruptHandler(void){
 		// Check if window should auto-close (General_ContinueTime < 0 means permanent window)
 		if(CurrentWindow->General_ContinueTime >= 0.0f && 
 		   OLED_SustainCounter.count >= (int16_t)(CurrentWindow->General_ContinueTime * 50)){
-			OLED_SustainCounter.SustainFlag = false;
-			OLED_SustainCounter.count = 0;
+			OLED_UI_FinishWindow(false);
 		}
 	}
 }
 #endif
-
-

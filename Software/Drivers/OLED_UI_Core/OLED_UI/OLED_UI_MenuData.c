@@ -1,6 +1,7 @@
 #include "OLED_UI_MenuData.h"
 #include "../../../Inc/motor.h"
 #include "SEGGER_RTT.h"
+#include "motor_ui_model.h"
 
 /*Motor Monitor Menu Data - Main interface with PWM settings, overcurrent protection, and device info*/
 
@@ -10,13 +11,12 @@ extern Motor_Config_t motor_config;
 // UI system control variables
 extern bool ColorMode;
 extern bool OLED_UI_ShowFps;
-extern int16_t OLED_UI_Brightness;
+extern int32_t OLED_UI_Brightness;
 
-// Helper variables for UI display (derived from motor_config)
-static float motor_pwm_frequency_khz = 10.0f;  // PWM frequency in kHz for UI display
-static bool motor_overcurrent_protection_bool = true;  // Bool conversion for UI
-static bool motor_auto_restart_bool = true;            // Bool conversion for UI
 static float motor_current_limit = 2.0f;               // Current limit for UI (not saved to Flash)
+
+static void MotorConfigWindowConfirm(void);
+static void MotorConfigWindowCancel(void);
 
 // Speed setting for animations
 #define SPEED 8
@@ -86,8 +86,10 @@ MenuWindow PWMDutyWindow = {
 	.Text_FontTopDistance = 3,
 	.General_WindowType = WINDOW_ROUNDRECTANGLE,
 	.General_ContinueTime = 4.0f,
+	.General_OnConfirm = MotorConfigWindowConfirm,
+	.General_OnCancel = MotorConfigWindowCancel,
 
-	.Prob_Data_Float = &motor_config.pwm_duty_cycle,
+	.Prob_Data_Float = &motor_ui_model.pwm_duty_percent,
 	.Prob_DataStep = 1.0f,
 	.Prob_MinData = 0.0f,
 	.Prob_MaxData = 100.0f,
@@ -106,11 +108,13 @@ MenuWindow PWMFrequencyWindow = {
 	.Text_FontTopDistance = 3,
 	.General_WindowType = WINDOW_ROUNDRECTANGLE,
 	.General_ContinueTime = 4.0f,
+	.General_OnConfirm = MotorConfigWindowConfirm,
+	.General_OnCancel = MotorConfigWindowCancel,
 
-	.Prob_Data_Float = &motor_pwm_frequency_khz,
+	.Prob_Data_Float = &motor_ui_model.pwm_frequency_khz,
 	.Prob_DataStep = 1.0f,
 	.Prob_MinData = 1.0f,
-	.Prob_MaxData = 100.0f,
+	.Prob_MaxData = 50.0f,
 	.Prob_BottomDistance = 3,
 	.Prob_LineHeight = 8,
 	.Prob_SideDistance = 4,
@@ -126,8 +130,10 @@ MenuWindow RestartDelayWindow = {
 	.Text_FontTopDistance = 3,
 	.General_WindowType = WINDOW_ROUNDRECTANGLE,
 	.General_ContinueTime = 4.0f,
+	.General_OnConfirm = MotorConfigWindowConfirm,
+	.General_OnCancel = MotorConfigWindowCancel,
 
-	.Prob_Data_Int = (int16_t*)&motor_config.auto_restart_delay_ms,
+	.Prob_Data_Int = &motor_ui_model.restart_delay_ms,
 	.Prob_DataStep = 500,
 	.Prob_MinData = 1000,
 	.Prob_MaxData = 60000,
@@ -146,8 +152,10 @@ MenuWindow MaxRestartAttemptsWindow = {
 	.Text_FontTopDistance = 3,
 	.General_WindowType = WINDOW_ROUNDRECTANGLE,
 	.General_ContinueTime = 4.0f,
+	.General_OnConfirm = MotorConfigWindowConfirm,
+	.General_OnCancel = MotorConfigWindowCancel,
 
-	.Prob_Data_Int = (int16_t*)&motor_config.max_restart_attempts,
+	.Prob_Data_Int = &motor_ui_model.max_restart_attempts,
 	.Prob_DataStep = 1,
 	.Prob_MinData = 1,
 	.Prob_MaxData = 10,
@@ -206,8 +214,10 @@ MenuWindow PIDTargetSpeedWindow = {
 	.Text_FontTopDistance = 3,
 	.General_WindowType = WINDOW_ROUNDRECTANGLE,
 	.General_ContinueTime = 4.0f,
+	.General_OnConfirm = MotorConfigWindowConfirm,
+	.General_OnCancel = MotorConfigWindowCancel,
 
-	.Prob_Data_Float = &motor_config.pid_target_speed_percent,
+	.Prob_Data_Float = &motor_ui_model.pid_target_speed_percent,
 	.Prob_DataStep = 5.0f,
 	.Prob_MinData = 0.0f,
 	.Prob_MaxData = 100.0f,
@@ -217,59 +227,55 @@ MenuWindow PIDTargetSpeedWindow = {
 };
 
 
-/**
- * @brief Create PWM duty cycle setting window
- */
-void PWMDutySettingWindow(void){
-	SEGGER_RTT_printf(0, "UI: Opening PWM duty cycle setting window\r\n");
-	OLED_UI_CreateWindow(&PWMDutyWindow);
-	/* After window closes, save configuration to Flash */
-	SEGGER_RTT_printf(0, "UI: PWM duty cycle changed to %.1f%%, saving to flash\r\n", motor_config.pwm_duty_cycle);
-	motor_config_save_to_flash();
+static void MotorConfigWindowBegin(Motor_UI_Field_t field, MenuWindow *window)
+{
+	motor_ui_begin_edit(field);
+	OLED_UI_CreateWindow(window);
 }
 
-
-
-/**
- * @brief Create PWM frequency setting window
- */
-
-void PWMFrequencySettingWindow(void){
-	/* Update motor_config frequency from kHz display value */
-	motor_config.pwm_frequency = motor_pwm_frequency_khz * 1000.0f;
-	SEGGER_RTT_printf(0, "UI: Opening PWM frequency setting window (%.1f kHz)\r\n", motor_pwm_frequency_khz);
-	OLED_UI_CreateWindow(&PWMFrequencyWindow);
-	/* After window closes, save configuration to Flash */
-	SEGGER_RTT_printf(0, "UI: PWM frequency changed to %.1f Hz, saving to flash\r\n", motor_config.pwm_frequency);
-	motor_config_save_to_flash();
+static void MotorConfigWindowConfirm(void)
+{
+	if (!motor_ui_confirm_edit()) {
+		SEGGER_RTT_printf(0, "UI: Configuration commit rejected\r\n");
+	}
 }
 
-/**
- * @brief Create restart delay setting window
- */
-void RestartDelaySettingWindow(void){
-	OLED_UI_CreateWindow(&RestartDelayWindow);
-	/* After window closes, save configuration to Flash */
-	motor_config_save_to_flash();
+static void MotorConfigWindowCancel(void)
+{
+	motor_ui_cancel_edit();
 }
 
-/**
- * @brief Create max restart attempts setting window
- */
-void MaxRestartAttemptsSettingWindow(void){
-	OLED_UI_CreateWindow(&MaxRestartAttemptsWindow);
-	/* After window closes, save configuration to Flash */
-	motor_config_save_to_flash();
+void PWMDutySettingWindow(void)
+{
+	MotorConfigWindowBegin(MOTOR_UI_FIELD_PWM_DUTY, &PWMDutyWindow);
+}
+
+void PWMFrequencySettingWindow(void)
+{
+	MotorConfigWindowBegin(MOTOR_UI_FIELD_PWM_FREQUENCY, &PWMFrequencyWindow);
+}
+
+void RestartDelaySettingWindow(void)
+{
+	MotorConfigWindowBegin(MOTOR_UI_FIELD_RESTART_DELAY, &RestartDelayWindow);
+}
+
+void MaxRestartAttemptsSettingWindow(void)
+{
+	MotorConfigWindowBegin(MOTOR_UI_FIELD_MAX_RESTART_ATTEMPTS, &MaxRestartAttemptsWindow);
 }
 
 /**
  * @brief Protection settings save callback
  */
 void ProtectionSaveCallback(void){
-	/* Sync bool helper variables back to motor_config uint8_t fields */
-	motor_config.overcurrent_protection = motor_overcurrent_protection_bool ? 1 : 0;
-	motor_config.auto_restart_enable = motor_auto_restart_bool ? 1 : 0;
-	motor_config_save_to_flash();
+	(void)motor_ui_commit_protection();
+}
+
+static void SetOutputSource(uint8_t output_source)
+{
+	(void)motor_ui_set_output_source(output_source);
+	OLED_UI_Back();
 }
 
 /**
@@ -277,41 +283,30 @@ void ProtectionSaveCallback(void){
  */
 void SetOutputSourceDisabled(void){
 	SEGGER_RTT_printf(0, "UI: Setting output source to Disabled\r\n");
-	motor_config.output_source = 0;  // Disabled
-	motor_config_save_to_flash();
-	motor_apply_config();  // Apply changes immediately
-	OLED_UI_Back();  // Go back to menu
+	SetOutputSource(0U);
 }
 
 void SetOutputSourceSTM32(void){
 	SEGGER_RTT_printf(0, "UI: Setting output source to STM32\r\n");
-	motor_config.output_source = 1;  // STM32
-	motor_config_save_to_flash();
-	motor_apply_config();  // Apply changes immediately
-	OLED_UI_Back();  // Go back to menu  
+	SetOutputSource(1U);
 }
 
 void SetOutputSourceFPGA(void){
 	SEGGER_RTT_printf(0, "UI: Setting output source to FPGA\r\n");
-	motor_config.output_source = 2;  // FPGA
-	motor_config_save_to_flash();
-	motor_apply_config();  // Apply changes immediately
-	OLED_UI_Back();  // Go back to menu
+	SetOutputSource(2U);
 }
 
 /**
  * @brief Motor Direction Selection Functions
  */
 void SetDirectionClockwise(void){
-	motor_config.motor_direction = 0;  // Clockwise = 0
-	motor_config_save_to_flash();
-	OLED_UI_Back();  // Go back to menu
+	(void)motor_ui_set_direction(0U);
+	OLED_UI_Back();
 }
 
 void SetDirectionCounterclockwise(void){
-	motor_config.motor_direction = 1;   // Counter-clockwise = 1  
-	motor_config_save_to_flash();
-	OLED_UI_Back();  // Go back to menu
+	(void)motor_ui_set_direction(1U);
+	OLED_UI_Back();
 }
 
 /**
@@ -319,8 +314,6 @@ void SetDirectionCounterclockwise(void){
  */
 void CurrentLimitSettingWindow(void){
 	OLED_UI_CreateWindow(&CurrentLimitWindow);
-	/* After window closes, save configuration to Flash */
-	motor_config_save_to_flash();
 }
 
 /**
@@ -334,11 +327,7 @@ void BrightnessWindow(void){
  * @brief Create PID target speed setting window
  */
 void PIDTargetSpeedSettingWindow(void){
-	SEGGER_RTT_printf(0, "UI: Opening PID target speed setting window\r\n");
-	OLED_UI_CreateWindow(&PIDTargetSpeedWindow);
-	/* After window closes, save configuration to Flash */
-	SEGGER_RTT_printf(0, "UI: PID target speed changed to %.1f%%, saving to flash\r\n", motor_config.pid_target_speed_percent);
-	motor_config_save_to_flash();
+	MotorConfigWindowBegin(MOTOR_UI_FIELD_PID_TARGET_SPEED, &PIDTargetSpeedWindow);
 }
 
 /**
@@ -382,25 +371,6 @@ void UserDecisionCancelMotor(void){
 }
 
 /**
- * @brief Update UI display helper variables from motor configuration
- * 
- * @details Only synchronizes helper variables needed for UI display (like frequency in kHz)
- *          All other UI elements directly reference motor_config fields
- */
-void motor_ui_update_from_config(void)
-{
-    SEGGER_RTT_printf(0, "=== Syncing UI display variables ===\r\n");
-    SEGGER_RTT_printf(0, "  Config: Freq=%.1fHz, Duty=%.1f%%\r\n", 
-                     motor_config.pwm_frequency, motor_config.pwm_duty_cycle);
-    
-    /* Sync helper variables for UI display */
-    motor_pwm_frequency_khz = motor_config.pwm_frequency / 1000.0f;  // Convert Hz to kHz for display
-    motor_overcurrent_protection_bool = (motor_config.overcurrent_protection != 0);  // Convert uint8_t to bool
-    motor_auto_restart_bool = (motor_config.auto_restart_enable != 0);              // Convert uint8_t to bool
-    
-}
-
-/**
  * @brief PWM Control submenu callback - Apply PWM motor control when entering submenu
  * 
  * @details This function is called when entering the PWM Control submenu.
@@ -410,8 +380,7 @@ void PWMControlMenuCallback(void)
 {
     SEGGER_RTT_printf(0, "UI: Entering PWM Control submenu\r\n");
     
-    /* Set motor to PWM control mode */
-    motor_config.motor_control_mode = 0;  // 0 = PWM control mode
+    (void)motor_ui_set_control_mode(0U);
     
     /* Sync UI variables from current motor config */
     motor_ui_update_from_config();
@@ -439,8 +408,7 @@ void PIDSpeedControlMenuCallback(void)
 {
     SEGGER_RTT_printf(0, "UI: Entering PID Speed Control submenu\r\n");
     
-    /* Set motor to PID control mode */
-    motor_config.motor_control_mode = 1;  // 1 = PID speed control mode
+    (void)motor_ui_set_control_mode(1U);
     
     /* Sync UI variables from current motor config */
     motor_ui_update_from_config();
@@ -458,14 +426,7 @@ void PIDSpeedControlMenuCallback(void)
         SEGGER_RTT_printf(0, "UI: Motor disabled, PID mode set but not applied\r\n");
     }
     
-    /* Save updated control mode to flash */
-    motor_config_save_to_flash();
 }
-
-/* Note: motor_ui_update_config() and motor_ui_save_to_config() functions removed
- * All UI elements now directly reference motor_config fields, eliminating the need for complex synchronization
- * Only motor_ui_update_from_config() remains for syncing display helper variables like frequency kHz conversion
- */
 
 //主菜单的菜单项
 MenuItem MainMenuItems[] = {
@@ -479,8 +440,8 @@ MenuItem MainMenuItems[] = {
 // Motor Settings Tiles Menu Items
 MenuItem MotorMenuItems[] = {
 	{.General_item_text = "Output Source",.General_callback = NULL,.General_SubMenuPage = &OutputSourceMenuPage,.Tiles_Icon = Image_output_source},
-	{.General_item_text = "PWM Control",.General_callback = PWMControlMenuCallback,.General_SubMenuPage = &PWMControlMenuPage,.Tiles_Icon = Image_pwm_control},
-	{.General_item_text = "PID Speed Control",.General_callback = PIDSpeedControlMenuCallback,.General_SubMenuPage = &PIDControlMenuPage,.Tiles_Icon = Image_pid_control},
+	{.General_item_text = "PWM Control",.General_callback = NULL,.General_SubMenuPage = &PWMControlMenuPage,.Tiles_Icon = Image_pwm_control},
+	{.General_item_text = "PID Speed Control",.General_callback = NULL,.General_SubMenuPage = &PIDControlMenuPage,.Tiles_Icon = Image_pid_control},
 	
 	{.General_item_text = NULL}, // Terminator
 };
@@ -497,8 +458,8 @@ MenuItem OutputSourceMenuItems[] = {
 
 // PWM Control Menu Items
 MenuItem PWMControlMenuItems[] = {
-	{.General_item_text = "PWM Frequency",.General_callback = PWMFrequencySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_pwm_frequency_khz},
-	{.General_item_text = "PWM Duty",.General_callback = PWMDutySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_config.pwm_duty_cycle},
+	{.General_item_text = "PWM Frequency",.General_callback = PWMFrequencySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_ui_model.pwm_frequency_khz},
+	{.General_item_text = "PWM Duty",.General_callback = PWMDutySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_ui_model.pwm_duty_percent},
 	{.General_item_text = "Motor Direction",.General_callback = NULL,.General_SubMenuPage = &MotorDirectionMenuPage,.List_BoolRadioBox = NULL},
 	{.General_item_text = "[Back]",.General_callback = OLED_UI_Back,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL},
 
@@ -507,7 +468,7 @@ MenuItem PWMControlMenuItems[] = {
 
 // PID Speed Control Menu Items
 MenuItem PIDControlMenuItems[] = {
-	{.General_item_text = "Target Speed %",.General_callback = PIDTargetSpeedSettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_config.pid_target_speed_percent},
+	{.General_item_text = "Target Speed %",.General_callback = PIDTargetSpeedSettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_FloatBox = &motor_ui_model.pid_target_speed_percent},
 	{.General_item_text = "Motor Direction",.General_callback = NULL,.General_SubMenuPage = &PIDDirectionMenuPage,.List_BoolRadioBox = NULL},
 	{.General_item_text = "[Back]",.General_callback = OLED_UI_Back,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL},
 
@@ -525,10 +486,10 @@ MenuItem MotorDirectionMenuItems[] = {
 
 //过流保护菜单项内容数组
 MenuItem ProtectionMenuItems[] = {
-	{.General_item_text = "Protection Enable",.General_callback = ProtectionSaveCallback,.General_SubMenuPage = NULL,.List_BoolRadioBox = &motor_overcurrent_protection_bool},
-	{.General_item_text = "Auto Restart",.General_callback = ProtectionSaveCallback,.General_SubMenuPage = NULL,.List_BoolRadioBox = &motor_auto_restart_bool},
-	{.General_item_text = "Restart Delay",.General_callback = RestartDelaySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_IntBox = (int16_t*)&motor_config.auto_restart_delay_ms},
-	{.General_item_text = "Max Attempts",.General_callback = MaxRestartAttemptsSettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_IntBox = (int16_t*)&motor_config.max_restart_attempts},
+	{.General_item_text = "Protection Enable",.General_callback = ProtectionSaveCallback,.General_SubMenuPage = NULL,.List_BoolRadioBox = &motor_ui_model.overcurrent_protection},
+	{.General_item_text = "Auto Restart",.General_callback = ProtectionSaveCallback,.General_SubMenuPage = NULL,.List_BoolRadioBox = &motor_ui_model.auto_restart},
+	{.General_item_text = "Restart Delay",.General_callback = RestartDelaySettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_IntBox = &motor_ui_model.restart_delay_ms},
+	{.General_item_text = "Max Attempts",.General_callback = MaxRestartAttemptsSettingWindow,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL,.List_IntBox = &motor_ui_model.max_restart_attempts},
 	{.General_item_text = "[Back]",.General_callback = OLED_UI_Back,.General_SubMenuPage = NULL,.List_BoolRadioBox = NULL},
 
 	{.General_item_text = NULL}, // Terminator
@@ -600,6 +561,7 @@ MenuPage PWMControlMenuPage = {
 	.General_MoveStyle = UNLINEAR,				// Non-linear animation
 	.General_MovingSpeed = SPEED,				// Animation speed
 	.General_ShowAuxiliaryFunction = NULL,		// Auxiliary display function
+	.General_OnEnter = PWMControlMenuCallback,
 	.General_MenuItems = PWMControlMenuItems,	// Menu items array
 
 	// Special properties for list menu type
@@ -620,6 +582,7 @@ MenuPage PIDControlMenuPage = {
 	.General_MoveStyle = UNLINEAR,				// Non-linear animation
 	.General_MovingSpeed = SPEED,				// Animation speed
 	.General_ShowAuxiliaryFunction = NULL,		// Auxiliary display function
+	.General_OnEnter = PIDSpeedControlMenuCallback,
 	.General_MenuItems = PIDControlMenuItems,	// Menu items array
 
 	// Special properties for list menu type

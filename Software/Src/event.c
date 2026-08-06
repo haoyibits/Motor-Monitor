@@ -15,6 +15,7 @@
 
 #include "bsp.h"
 #include "motor.h"
+#include "app_event_queue.h"
 #include "SEGGER_RTT.h"
 #include "../Drivers/OLED_UI_Core/OLED_UI/OLED_UI_MenuData.h"
 
@@ -31,7 +32,30 @@ Button_HandleTypeDef button_return;  // RETURN button (PE11)
 Button_Manager_t button_manager;     // Button manager for efficient scanning
 Button_HandleTypeDef *button_array[] = {&button_up, &button_down, &button_enter, &button_return}; // Button array for manager
 
-Encoder_HandleTypeDef motor_encoder; // Global encoder handle for system-wide access
+static App_Event_Queue_t app_event_queue;
+
+static void motor_notification_handler(Motor_Notification_t notification)
+{
+    App_Event_Type_t event_type = APP_EVENT_NONE;
+
+    switch (notification) {
+        case MOTOR_NOTIFICATION_OVERCURRENT:
+            event_type = APP_EVENT_MOTOR_OVERCURRENT;
+            break;
+        case MOTOR_NOTIFICATION_RESTARTING:
+            event_type = APP_EVENT_MOTOR_RESTARTING;
+            break;
+        case MOTOR_NOTIFICATION_MAX_RESTARTS:
+            event_type = APP_EVENT_MOTOR_MAX_RESTARTS;
+            break;
+        default:
+            break;
+    }
+
+    if (event_type != APP_EVENT_NONE) {
+        (void)app_event_queue_push(&app_event_queue, (App_Event_t){.type = event_type});
+    }
+}
 
 /**
  * @brief Initialize button system for user interface
@@ -162,16 +186,7 @@ void button_handler(void)
  */
 void encoder_handler(void)
 {
-    /* Check if encoder timer has expired */
-    if (systick_timer_expired(&encoder_timer)) {
-        // 添加调试信息来检查编码器状态
-        int32_t total_count = motor_encoder.TotalCount;
-        uint32_t current_time = systick_get_ms();
-        int32_t rpm = encoder_calculate_speed_rpm(&motor_encoder, current_time);
-        
-        //SEGGER_RTT_printf(0, "TotalCount: %d, Time: %d ms, Speed: %d RPM\r\n",
-        //                 total_count, current_time, rpm);
-    }
+    (void)encoder_calculate_speed_rpm(&motor_encoder, systick_get_ms());
 }
 
 /**
@@ -191,9 +206,7 @@ void encoder_handler(void)
  */
 void current_handler(void)
 {
-    /* Check if current timer has expired */
-    if (systick_timer_expired(&current_timer)) {
-        if (current_adcAverageReady) {
+    if (current_adcAverageReady) {
             /* Calculate average current from ADC buffer */
             sum = 0;
             for (int i = 0; i < 200; i++) 
@@ -206,8 +219,9 @@ void current_handler(void)
             /* Update motor protection system with auto-restart logic */
             motor_protection_update();
             
-            /* Check for overcurrent condition using legacy system */
-            if (current_adcAverage > motor_monitor.current_threshold) {
+            /* Keep the consecutive-sample safeguard aligned with the enable flag. */
+            if (motor_config.overcurrent_protection &&
+                current_adcAverage > motor_monitor.current_threshold) {
                 motor_monitor.overcurrent_count++;
                 //SEGGER_RTT_printf(0, "Overcurrent detected: %d (threshold: %d) count: %d\r\n", 
                 //                 current_adcAverage, motor_monitor.current_threshold, motor_monitor.overcurrent_count);
@@ -228,17 +242,14 @@ void current_handler(void)
                 //                 motor_monitor.state, current_adcAverage, motor_monitor.current_threshold);
             }
             
-            current_adcAverageReady = 0;
-        }
+        current_adcAverageReady = 0;
     }
 }
 
 void oled_handler(void)
 {
-    /* Check if encoder timer has expired */
-    if (systick_timer_expired(&oledui_timer)) {
-        OLED_UI_InterruptHandler();
-    }
+    OLED_UI_InterruptHandler();
+    OLED_UI_MainLoop();
 }
 
 
@@ -255,6 +266,9 @@ void oled_handler(void)
  */
 void scan_init(void)
 {
+    app_event_queue_init(&app_event_queue);
+    motor_set_notification_callback(motor_notification_handler);
+
     /* Initialize encoder timer for periodic scanning */
     systick_timer_init(&encoder_timer, 100, 1);          // 100ms auto-reload timer
     systick_timer_start(&encoder_timer);                // Start timer for periodic updates
@@ -268,7 +282,6 @@ void scan_init(void)
     systick_timer_init(&button_manager.scan_timer, 5, 1);
     systick_timer_start(&button_manager.scan_timer);
 
-    Timer_Init();           // Initialize UI timer system
 }
 
 /**
@@ -284,13 +297,48 @@ void scan_init(void)
  */
 void scan_check(void)
 {
-    encoder_handler();  // Handle encoder events
-    current_handler();  // Handle current monitoring events
-    oled_handler();     // Handle OLED UI events
-    
-    /* Check button states using optimized manager (all 4 buttons scanned with single timer) */
+    /* Refresh debounced input before the UI consumes button state. */
     button_handler();
-    
+
+    if (systick_timer_expired(&current_timer) && current_adcAverageReady) {
+        (void)app_event_queue_push(&app_event_queue,
+                                   (App_Event_t){.type = APP_EVENT_CURRENT_SAMPLE});
+    }
+    if (systick_timer_expired(&encoder_timer)) {
+        (void)app_event_queue_push(&app_event_queue,
+                                   (App_Event_t){.type = APP_EVENT_ENCODER_SAMPLE});
+    }
+    if (systick_timer_expired(&oledui_timer)) {
+        (void)app_event_queue_push(&app_event_queue,
+                                   (App_Event_t){.type = APP_EVENT_UI_TICK});
+    }
+
+    App_Event_t event;
+    while (app_event_queue_pop(&app_event_queue, &event)) {
+        switch (event.type) {
+            case APP_EVENT_ENCODER_SAMPLE:
+                encoder_handler();
+                break;
+            case APP_EVENT_CURRENT_SAMPLE:
+                current_handler();
+                break;
+            case APP_EVENT_UI_TICK:
+                oled_handler();
+                break;
+            case APP_EVENT_MOTOR_OVERCURRENT:
+                ShowOvercurrentFaultPopup();
+                break;
+            case APP_EVENT_MOTOR_RESTARTING:
+                ShowMotorRestartPopup();
+                break;
+            case APP_EVENT_MOTOR_MAX_RESTARTS:
+                ShowMaxAttemptsReachedPopup();
+                break;
+            case APP_EVENT_NONE:
+            default:
+                break;
+        }
+    }
 }
 
 /**

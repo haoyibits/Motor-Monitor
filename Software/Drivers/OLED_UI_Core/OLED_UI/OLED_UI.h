@@ -238,6 +238,8 @@ typedef struct MenuWindow{
 	int16_t General_Height;									//[通用属性]窗口高度
 	float General_ContinueTime;                             //[通用属性]窗口停留时间
 	uint8_t General_WindowType;                             //[通用属性]窗口类型
+	void (*General_OnConfirm)(void);                       // Called when Enter confirms the window
+	void (*General_OnCancel)(void);                        // Called when Back or timeout cancels the window
 
 	char* Text_String;										//[文本属性]窗口显示的文字
 	OLED_Font Text_FontSize;								//[文本属性]窗口字体大小
@@ -248,7 +250,7 @@ typedef struct MenuWindow{
 
 
 	float* Prob_Data_Float;										//[进度条属性]窗口数据指针(浮点类型)【二选一】
-	int16_t* Prob_Data_Int;										//[进度条属性]窗口数据指针(int16_t整型类型)【二选一】
+	int32_t* Prob_Data_Int;										//[进度条属性]窗口数据指针(32-bit integer)【二选一】
 	float Prob_DataStep;									//[进度条属性]窗口数据步长
 	float Prob_MinData;									//[进度条属性]窗口数据的最小值
 	float Prob_MaxData;									//[进度条属性]窗口数据的最大值
@@ -274,6 +276,7 @@ typedef struct MenuPage {
     struct MenuItem* General_MenuItems;
     int16_t General_LineSpace;
     void (*General_ShowAuxiliaryFunction)(void);
+    void (*General_OnEnter)(void);
 
     OLED_Area List_MenuArea;
     bool List_IfDrawFrame;
@@ -297,7 +300,7 @@ typedef struct MenuItem {
     MenuPage* General_SubMenuPage;
 
     bool* List_BoolRadioBox;
-		int16_t* List_IntBox;
+		int32_t* List_IntBox;
 		float* List_FloatBox;
     const uint8_t* Tiles_Icon;
 		const uint8_t (*Tiles_GifIcon)[128];
@@ -326,7 +329,7 @@ void OLED_UI_Init(MenuPage* Page);
 bool GetEnterFlag(void);
 bool GetFadeoutFlag(void);
 int16_t CalcStringWidth(int16_t ChineseFont, int16_t ASCIIFont, const char *format, ...);
-int8_t GetWindowDataStyle(int16_t *int16_tdata,float *float_tdata);
+int8_t GetWindowDataStyle(int32_t *integer_data,float *float_tdata);
 void OLED_DrawWindow(void);
 void MenuItemsMoveUp(void);
 void MenuItemsMoveDown(void);
@@ -395,4 +398,3 @@ void OLED_UI_InterruptHandler(void);          //OLED_UI库的中断处理函数,
 }  // extern "C"
 #endif
 #endif
-

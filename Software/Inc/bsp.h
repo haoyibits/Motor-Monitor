@@ -122,31 +122,11 @@
 #define STARTUP_TIMEOUT_MS            2000   // Maximum startup phase duration (ms)
 #define OVERCURRENT_COUNT_LIMIT       3     // Number of consecutive overcurrent detections before shutdown
 
-/**
- * @brief Motor state enumeration for current protection
- */
-typedef enum {
-    MOTOR_STATE_STOPPED = 0,    // Motor is stopped
-    MOTOR_STATE_STARTING,       // Motor is in startup phase (allows higher current)
-    MOTOR_STATE_RUNNING         // Motor is running normally (strict current limit)
-} Motor_State_t;
-
-/**
- * @brief Motor current monitoring structure
- */
-typedef struct {
-    Motor_State_t state;                    // Current motor state
-    uint32_t startup_start_time;            // Timestamp when startup began
-    uint8_t overcurrent_count;              // Consecutive overcurrent detection counter
-    uint16_t current_threshold;             // Active current threshold based on state
-} Motor_Current_Monitor_t;
-
 /* Global shared variables for ADC data handling */
 extern volatile uint16_t current_adcBuffer[200];  // ADC sample buffer
 extern uint16_t current_adcAverage;               // Calculated average value
 extern volatile uint8_t current_adcAverageReady;  // Flag indicating new data is ready
 extern uint32_t sum;
-extern Motor_Current_Monitor_t motor_monitor;     // Motor current monitoring instance
 
 /**
  * @brief Initialize RCC (Reset and Clock Control)

@@ -15,7 +15,6 @@
 #include "uart.h"
 #include "systick.h"
 #include "SEGGER_RTT.h"
-#include "OLED_UI_MenuData.h"
 /* External motor encoder handle - defined in event.c */
 extern Encoder_HandleTypeDef motor_encoder;
 
@@ -24,6 +23,25 @@ Motor_Config_t motor_config;
 
 /* Global motor protection state */
 Motor_Protection_State_t motor_protection_state;
+Motor_Current_Monitor_t motor_monitor = {
+    .state = MOTOR_STATE_STOPPED,
+    .startup_start_time = 0U,
+    .overcurrent_count = 0U,
+    .current_threshold = CURRENT_RUNNING_THRESHOLD
+};
+static Motor_Notification_Callback_t motor_notification_callback;
+
+void motor_set_notification_callback(Motor_Notification_Callback_t callback)
+{
+    motor_notification_callback = callback;
+}
+
+static void motor_notify(Motor_Notification_t notification)
+{
+    if (motor_notification_callback != NULL) {
+        motor_notification_callback(notification);
+    }
+}
 
 /* UART handle for FPGA communication */
 static UART_HandleTypeDef huart_fpga;
@@ -99,12 +117,12 @@ static uint16_t motor_config_calculate_checksum(const Motor_Config_t *config)
     
     /* Convert float to bytes for checksum calculation */
     const uint8_t *freq_bytes = (const uint8_t *)&config->pwm_frequency;
-    for (int i = 0; i < sizeof(float); i++) {
+    for (size_t i = 0U; i < sizeof(float); i++) {
         checksum += freq_bytes[i];
     }
     
     const uint8_t *duty_bytes = (const uint8_t *)&config->pwm_duty_cycle;
-    for (int i = 0; i < sizeof(float); i++) {
+    for (size_t i = 0U; i < sizeof(float); i++) {
         checksum += duty_bytes[i];
     }
     
@@ -118,12 +136,12 @@ static uint16_t motor_config_calculate_checksum(const Motor_Config_t *config)
     
     /* PID parameters */
     const uint8_t *pid_speed_bytes = (const uint8_t *)&config->pid_target_speed_percent;
-    for (int i = 0; i < sizeof(float); i++) {
+    for (size_t i = 0U; i < sizeof(float); i++) {
         checksum += pid_speed_bytes[i];
     }
     
     const uint8_t *max_rpm_bytes = (const uint8_t *)&config->motor_max_rpm;
-    for (int i = 0; i < sizeof(float); i++) {
+    for (size_t i = 0U; i < sizeof(float); i++) {
         checksum += max_rpm_bytes[i];
     }
     
@@ -173,7 +191,7 @@ static uint8_t motor_config_validate(const Motor_Config_t *config)
         return 0;
     }
     
-    if (config->max_restart_attempts > 10) {
+    if (config->max_restart_attempts < 1U || config->max_restart_attempts > 10U) {
         return 0;
     }
     
@@ -472,11 +490,7 @@ void motor_set_direction(uint8_t direction)
  */
 void motor_start(void)
 {
-    /* Configure motor state for startup */
-    motor_monitor.state = MOTOR_STATE_STARTING;
-    motor_monitor.startup_start_time = systick_get_ms();
-    motor_monitor.current_threshold = CURRENT_STARTUP_THRESHOLD;
-    motor_monitor.overcurrent_count = 0;
+    motor_state_start(&motor_monitor, systick_get_ms(), CURRENT_STARTUP_THRESHOLD);
     
     /* Enable motor */
     gpio_write(MOTOR_ENABLE_PORT, MOTOR_ENABLE_PIN, 1);
@@ -500,10 +514,7 @@ void motor_emergency_shutdown(void)
     gpio_write(MOTOR_P_PORT, MOTOR_P_PIN, 0);            /* Stop both directions */
     gpio_write(MOTOR_M_PORT, MOTOR_M_PIN, 0);
     
-    /* Reset motor monitoring state */
-    motor_monitor.state = MOTOR_STATE_STOPPED;
-    motor_monitor.overcurrent_count = 0;
-    motor_monitor.current_threshold = CURRENT_RUNNING_THRESHOLD;
+    motor_state_stop(&motor_monitor, CURRENT_RUNNING_THRESHOLD);
 }
 
 /**
@@ -516,30 +527,10 @@ void motor_emergency_shutdown(void)
  */
 void motor_current_state_update(void)
 {
-    uint32_t current_time = systick_get_ms();
-    
-    switch (motor_monitor.state) {
-        case MOTOR_STATE_STOPPED:
-            /* Motor is stopped, no action needed */
-            motor_monitor.overcurrent_count = 0;
-            break;
-            
-        case MOTOR_STATE_STARTING:
-            /* Check if startup timeout has elapsed */
-            if ((current_time - motor_monitor.startup_start_time) >= STARTUP_TIMEOUT_MS) {
-                /* Transition to running state with strict current protection */
-                motor_monitor.state = MOTOR_STATE_RUNNING;
-                motor_monitor.current_threshold = CURRENT_RUNNING_THRESHOLD;
-                motor_monitor.overcurrent_count = 0;  /* Reset counter for new state */
-                //SEGGER_RTT_printf(0, "Motor state: STARTING -> RUNNING (threshold: %d)\r\n", 
-                //                 motor_monitor.current_threshold);
-            }
-            break;
-            
-        case MOTOR_STATE_RUNNING:
-            /* Motor in normal operation, maintain strict protection */
-            break;
-    }
+    motor_state_update(&motor_monitor,
+                       systick_get_ms(),
+                       STARTUP_TIMEOUT_MS,
+                       CURRENT_RUNNING_THRESHOLD);
 }
 
 /**
@@ -638,7 +629,7 @@ void motor_protection_update(void)
             SEGGER_RTT_printf(0, "Overcurrent fault detected! Current: %d\r\n", current_adcAverage);
             
             /* Show overcurrent fault popup */
-            ShowOvercurrentFaultPopup();
+            motor_notify(MOTOR_NOTIFICATION_OVERCURRENT);
             
             /* Schedule restart if auto-restart is enabled */
             if (motor_config.auto_restart_enable && 
@@ -655,7 +646,7 @@ void motor_protection_update(void)
                 if (motor_protection_state.restart_attempts >= motor_config.max_restart_attempts) {
                     SEGGER_RTT_printf(0, "Maximum restart attempts exceeded - showing user decision popup\r\n");
                     motor_protection_state.waiting_user_decision = 1;
-                    ShowMaxAttemptsReachedPopup();
+                    motor_notify(MOTOR_NOTIFICATION_MAX_RESTARTS);
                 }
             }
         }
@@ -678,7 +669,7 @@ void motor_protection_update(void)
                          motor_config.max_restart_attempts);
         
         /* Show motor restart popup */
-        ShowMotorRestartPopup();
+        motor_notify(MOTOR_NOTIFICATION_RESTARTING);
         
         /* Apply current motor configuration */
         motor_apply_config();
@@ -875,4 +866,3 @@ void motor_handle_user_decision(uint8_t retry)
         motor_config_save_to_flash();   // Save disabled state
     }
 }
-

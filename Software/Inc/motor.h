@@ -15,6 +15,7 @@
 #define MOTOR_H
 
 #include "stm32f407xx.h"
+#include "motor_state.h"
 
 /**
  * @brief Motor parameter configuration structure for SPI Flash storage
@@ -62,11 +63,22 @@ typedef struct {
     uint8_t checksum;                // Simple checksum
 } FPGA_Command_Packet_t;
 
+typedef enum {
+    MOTOR_NOTIFICATION_OVERCURRENT = 0,
+    MOTOR_NOTIFICATION_RESTARTING,
+    MOTOR_NOTIFICATION_MAX_RESTARTS
+} Motor_Notification_t;
+
+typedef void (*Motor_Notification_Callback_t)(Motor_Notification_t notification);
+
 /* Global motor configuration instance */
 extern Motor_Config_t motor_config;
 
 /* Global motor protection state */
 extern Motor_Protection_State_t motor_protection_state;
+extern Motor_Current_Monitor_t motor_monitor;
+
+void motor_set_notification_callback(Motor_Notification_Callback_t callback);
 
 /* Flash storage configuration */
 #define MOTOR_CONFIG_FLASH_ADDRESS    0x000000  // Store config at beginning of flash

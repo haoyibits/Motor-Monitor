@@ -39,7 +39,6 @@ int main(void)
     /* Main loop */
     while (1)
     {
-        OLED_UI_MainLoop();
         scan_check();
     }
 }

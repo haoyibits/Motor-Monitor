@@ -30,7 +30,6 @@
  */
 
 #include "OLED_UI_Driver.h"
-#include "bsp.h"
 
 /**
  * @brief External button handle declarations
