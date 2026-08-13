@@ -1,0 +1,84 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "固件：配置 Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset",
+                "debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/Software"
+            },
+            "hide": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "固件：构建",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/Software"
+            },
+            "dependsOn": "固件：配置 Debug",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "固件：下载",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "debug",
+                "--target",
+                "flash"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/Software"
+            },
+            "dependsOn": "固件：构建",
+            "problemMatcher": []
+        },
+        {
+            "label": "固件：调试服务器",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "openocd/daplink.cfg"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/Software"
+            },
+            "dependsOn": "固件：构建",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "openocd",
+                "pattern": {
+                    "regexp": "^(?!)$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "Open On-Chip Debugger",
+                    "endsPattern": "Listening on port 3333 for gdb connections"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        }
+    ]
+}

@@ -147,5 +147,68 @@ This is haoyibits' personal learning project. To contribute:
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## OpenOCD Programming and Debugging
+
+The default configuration targets a DAPLink/CMSIS-DAP probe connected to the MCU
+over SWD. Connect `SWDIO`, `SWCLK`, `GND`, and the target reference voltage (`3.3V`);
+connecting `NRST` is recommended for recovering firmware that changes the clock
+or enters a low-power mode.
+
+Required command-line tools:
+
+- `arm-none-eabi-gcc` and `arm-none-eabi-gdb`
+- CMake and Ninja
+- OpenOCD 0.12 or later
+
+Build and program from a terminal:
+
+```bash
+cd Software
+cmake --preset debug
+cmake --build --preset debug
+cmake --build --preset debug --target flash
+```
+
+To erase the whole internal flash:
+
+```bash
+cmake --build --preset debug --target erase
+```
+
+For a command-line debug session, use two terminals. Start the OpenOCD GDB
+server in the first terminal:
+
+```bash
+cd Software
+openocd -f openocd/daplink.cfg
+```
+
+Then connect GDB in the second terminal:
+
+```bash
+cd Software
+arm-none-eabi-gdb build/debug/motor_monitor.elf
+```
+
+At the GDB prompt:
+
+```gdb
+target extended-remote localhost:3333
+monitor reset halt
+load
+break main
+continue
+```
+
+In VS Code, install the recommended **Cortex-Debug** extension, open this
+repository root, select `STM32F407: DAPLink + OpenOCD`, and press `F5`.
+The debugger builds the Debug preset, starts OpenOCD, programs the ELF, and
+stops at `main` automatically. VS Code also provides the visible tasks
+`固件：构建`, `固件：下载`, and `固件：调试服务器`.
+
+The default probe configuration is in `Software/openocd/daplink.cfg`; an ST-Link
+alternative remains in `Software/openocd/stlink.cfg`. To use another probe,
+configure CMake with `-DOPENOCD_CONFIG=/absolute/path/to/your.cfg`.
+
 
 *A complete development platform designed for embedded systems learning*

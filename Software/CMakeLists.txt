@@ -189,3 +189,32 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
 )
+
+# OpenOCD programming helpers. Override OPENOCD_CONFIG at configure time when
+# using a probe other than DAPLink/CMSIS-DAP.
+find_program(OPENOCD_EXECUTABLE NAMES openocd)
+set(OPENOCD_CONFIG
+    "${CMAKE_SOURCE_DIR}/openocd/daplink.cfg"
+    CACHE FILEPATH "OpenOCD board configuration file"
+)
+
+if(OPENOCD_EXECUTABLE)
+    add_custom_target(flash
+        COMMAND ${OPENOCD_EXECUTABLE}
+            -f ${OPENOCD_CONFIG}
+            -c "program $<TARGET_FILE:${CMAKE_PROJECT_NAME}> verify reset exit"
+        DEPENDS ${CMAKE_PROJECT_NAME}
+        USES_TERMINAL
+        COMMENT "Programming ${CMAKE_PROJECT_NAME} with OpenOCD"
+    )
+
+    add_custom_target(erase
+        COMMAND ${OPENOCD_EXECUTABLE}
+            -f ${OPENOCD_CONFIG}
+            -c "init; reset halt; stm32f4x mass_erase 0; reset run; exit"
+        USES_TERMINAL
+        COMMENT "Erasing STM32F4 flash with OpenOCD"
+    )
+else()
+    message(STATUS "OpenOCD not found: flash and erase targets are disabled")
+endif()

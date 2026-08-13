@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "STM32F407: DAPLink + OpenOCD",
+            "cwd": "${workspaceFolder}/Software",
+            "executable": "${workspaceFolder}/Software/build/debug/motor_monitor.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "servertype": "openocd",
+            "device": "STM32F407VG",
+            "interface": "swd",
+            "configFiles": [
+                "${workspaceFolder}/Software/openocd/daplink.cfg"
+            ],
+            "gdbPath": "arm-none-eabi-gdb",
+            "showDevDebugOutput": "raw",
+            "runToEntryPoint": "main",
+            "preLaunchTask": "固件：构建"
+        }
+    ]
+}
